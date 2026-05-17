@@ -5,7 +5,6 @@ import time
 
 from config import (
     MISSION_SEQUENCE,
-    CENTER_TOLERANCE,
     STABLE_LIMIT,
     VIDEO_OUTPUT_NAME
 )
@@ -15,11 +14,15 @@ from detector import DetectorSystem
 from payload import PayloadSystem
 from targeting import TargetingSystem
 from ui import UISystem
+from logger import LoggerSystem
 
 
 class MissionSystem:
 
     def __init__(self):
+
+        self.logger = LoggerSystem()
+        self.logger.system_started()
 
         self.camera = CameraSystem()
         self.detector = DetectorSystem()
@@ -71,11 +74,16 @@ class MissionSystem:
 
         if not self.camera.is_opened():
             print("Kamera acilamadi.")
+            self.logger.camera_failed()
+            self.stop()
             return
+
+        self.logger.camera_opened()
 
         self.start_video_recording()
 
         print("Gorev basladi.")
+        self.logger.write_log("GOREV BASLADI")
 
         while True:
 
@@ -83,6 +91,7 @@ class MissionSystem:
 
             if frame is None:
                 print("Goruntu alinamadi.")
+                self.logger.write_log("GORUNTU ALINAMADI")
                 break
 
             fps = self.calculate_fps()
@@ -104,8 +113,14 @@ class MissionSystem:
 
                 status = "GOREV TAMAMLANDI"
                 direction = "TUM YUKLER BIRAKILDI"
+                self.logger.mission_completed()
 
             elif target_data is not None:
+
+                self.logger.target_detected(
+                    target_data["class_name"],
+                    target_data["confidence"]
+                )
 
                 is_centered = target_data["is_centered"]
 
@@ -118,6 +133,7 @@ class MissionSystem:
                         status = "YUK BIRAKILDI"
 
                         self.payload.drop_payload(current_target)
+                        self.logger.payload_dropped(current_target)
 
                         self.current_target_index += 1
                         self.stable_count = 0
@@ -131,6 +147,7 @@ class MissionSystem:
 
             else:
                 self.stable_count = 0
+                self.logger.target_lost()
 
             self.ui.draw(
                 frame=frame,
@@ -141,7 +158,8 @@ class MissionSystem:
                 fps=fps
             )
 
-            self.video_writer.write(frame)
+            if self.video_writer is not None:
+                self.video_writer.write(frame)
 
             cv2.imshow("TEKNOFEST IHA GOREV SISTEMI", frame)
 
@@ -160,3 +178,4 @@ class MissionSystem:
         cv2.destroyAllWindows()
 
         print("Sistem kapatildi.")
+        self.logger.system_stopped()
