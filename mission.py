@@ -15,6 +15,7 @@ from payload import PayloadSystem
 from targeting import TargetingSystem
 from ui import UISystem
 from logger import LoggerSystem
+from failsafe import FailsafeSystem
 
 
 class MissionSystem:
@@ -23,6 +24,8 @@ class MissionSystem:
 
         self.logger = LoggerSystem()
         self.logger.system_started()
+
+        self.failsafe = FailsafeSystem()
 
         self.camera = CameraSystem()
         self.detector = DetectorSystem()
@@ -94,7 +97,12 @@ class MissionSystem:
                 self.logger.write_log("GORUNTU ALINAMADI")
                 break
 
+            self.failsafe.update_frame_time()
+
             fps = self.calculate_fps()
+
+            failsafe_status = self.failsafe.get_status(fps)
+            print(failsafe_status)
 
             current_target = self.get_current_target()
 
@@ -116,6 +124,8 @@ class MissionSystem:
                 self.logger.mission_completed()
 
             elif target_data is not None:
+
+                self.failsafe.update_target_time()
 
                 self.logger.target_detected(
                     target_data["class_name"],
