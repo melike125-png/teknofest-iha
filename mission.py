@@ -73,6 +73,28 @@ class MissionSystem:
             (width, height)
         )
 
+    def finish_mission(self, frame, target_data, fps):
+
+        status = "GOREV TAMAMLANDI"
+        direction = "TUM YUKLER BIRAKILDI"
+
+        self.logger.mission_completed()
+
+        self.ui.draw(
+            frame=frame,
+            target_data=target_data,
+            current_target=None,
+            status=status,
+            direction=direction,
+            fps=fps
+        )
+
+        if self.video_writer is not None:
+            self.video_writer.write(frame)
+
+        cv2.imshow("TEKNOFEST IHA GOREV SISTEMI", frame)
+        cv2.waitKey(2000)
+
     def start(self):
 
         if not self.camera.is_opened():
@@ -119,9 +141,8 @@ class MissionSystem:
 
             if current_target is None:
 
-                status = "GOREV TAMAMLANDI"
-                direction = "TUM YUKLER BIRAKILDI"
-                self.logger.mission_completed()
+                self.finish_mission(frame, target_data, fps)
+                break
 
             elif target_data is not None:
 
