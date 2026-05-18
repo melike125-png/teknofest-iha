@@ -1,10 +1,9 @@
-# mission.py
-
 import cv2
 import time
 
 from config import (
-    MISSION_SEQUENCE,
+    PAYLOAD_ORDER,
+    PAYLOAD_TARGET_MAP,
     STABLE_LIMIT,
     VIDEO_OUTPUT_NAME
 )
@@ -33,18 +32,28 @@ class MissionSystem:
         self.targeting = TargetingSystem()
         self.ui = UISystem()
 
-        self.current_target_index = 0
+        self.current_payload_index = 0
         self.stable_count = 0
         self.prev_time = 0
+        self.last_no_target_log_time = 0
 
         self.video_writer = None
 
-    def get_current_target(self):
+    def get_current_payload(self):
 
-        if self.current_target_index < len(MISSION_SEQUENCE):
-            return MISSION_SEQUENCE[self.current_target_index]
+        if self.current_payload_index < len(PAYLOAD_ORDER):
+            return PAYLOAD_ORDER[self.current_payload_index]
 
         return None
+
+    def get_current_target(self):
+
+        current_payload = self.get_current_payload()
+
+        if current_payload is None:
+            return None
+
+        return PAYLOAD_TARGET_MAP[current_payload]
 
     def calculate_fps(self):
 
@@ -124,8 +133,8 @@ class MissionSystem:
             fps = self.calculate_fps()
 
             failsafe_status = self.failsafe.get_status(fps)
-            print(failsafe_status)
 
+            current_payload = self.get_current_payload()
             current_target = self.get_current_target()
 
             detections = self.detector.detect(frame)
@@ -139,7 +148,7 @@ class MissionSystem:
             status = "HEDEF YOK"
             direction = "ARAMA MODU"
 
-            if current_target is None:
+            if current_payload is None or current_target is None:
 
                 self.finish_mission(frame, target_data, fps)
                 break
@@ -161,12 +170,15 @@ class MissionSystem:
                     direction = "MERKEZDE"
 
                     if self.stable_count >= STABLE_LIMIT:
-                        status = "YUK BIRAKILDI"
+                        status = f"{current_payload} YUK BIRAKILDI"
 
-                        self.payload.drop_payload(current_target)
-                        self.logger.payload_dropped(current_target)
+                        self.payload.drop_payload(current_payload)
 
-                        self.current_target_index += 1
+                        self.logger.write_log(
+                            f"{current_payload} YUK -> {current_target} HEDEFINE BIRAKILDI"
+                        )
+
+                        self.current_payload_index += 1
                         self.stable_count = 0
 
                         time.sleep(1)
@@ -178,7 +190,13 @@ class MissionSystem:
 
             else:
                 self.stable_count = 0
-                self.logger.target_lost()
+
+                current_time = time.time()
+
+                if current_time - self.last_no_target_log_time > 1:
+                    print(failsafe_status)
+                    self.logger.target_lost()
+                    self.last_no_target_log_time = current_time
 
             self.ui.draw(
                 frame=frame,

@@ -1,16 +1,10 @@
-# payload.py
-
 import time
 
-from config import (
-    SERVO_TRIANGLE_PIN,
-    SERVO_HEXAGON_PIN
-)
+from config import DROP_SERVO_PIN
 
 try:
     from gpiozero import Servo
     GPIO_AVAILABLE = True
-
 except:
     GPIO_AVAILABLE = False
 
@@ -22,43 +16,30 @@ class PayloadSystem:
         self.gpio_active = GPIO_AVAILABLE
 
         if self.gpio_active:
-
-            self.triangle_servo = Servo(SERVO_TRIANGLE_PIN)
-            self.hexagon_servo = Servo(SERVO_HEXAGON_PIN)
-
-            print("Servo sistemi hazir.")
-
+            self.drop_servo = Servo(DROP_SERVO_PIN)
+            print("Tek servo yuk birakma sistemi hazir.")
         else:
             print("GPIO aktif degil.")
             print("Servo test modu acildi.")
 
-    def trigger_servo(self, servo):
+    def trigger_servo(self):
 
-        servo.max()
-
+        self.drop_servo.max()
         time.sleep(0.7)
 
-        servo.min()
-
+        self.drop_servo.min()
         time.sleep(0.7)
 
-    def drop_payload(self, target_name):
+    def drop_payload(self, payload_color):
 
         print("=" * 40)
-        print(f"{target_name} icin yuk birakiliyor...")
+        print(f"{payload_color} yuk birakiliyor...")
         print("=" * 40)
 
         if not self.gpio_active:
-
             print("TEST MODU -> Servo fiziksel olarak calismiyor.")
             return
 
-        if target_name == "kirmizi_ucgen":
-
-            self.trigger_servo(self.triangle_servo)
-
-        elif target_name == "mavi_altigen":
-
-            self.trigger_servo(self.hexagon_servo)
+        self.trigger_servo()
 
         print("Yuk birakma tamamlandi.")
