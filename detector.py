@@ -1,5 +1,7 @@
 # detector.py
 
+import os
+
 from ultralytics import YOLO
 
 from config import (
@@ -9,15 +11,46 @@ from config import (
     MAX_DETECTION
 )
 
+_VALID_MODEL_EXTENSIONS = (".pt", ".onnx", ".engine", ".torchscript")
+
+
 class DetectorSystem:
 
     def __init__(self):
+
+        self._validate_model_file()
 
         print("YOLO modeli yukleniyor...")
 
         self.model = YOLO(MODEL_PATH)
 
         print("YOLO modeli hazir.")
+
+    def _validate_model_file(self):
+
+        if not MODEL_PATH or not str(MODEL_PATH).strip():
+            raise FileNotFoundError("MODEL_PATH bos. config.py icinde gecerli bir model yolu tanimlayin.")
+
+        model_path = os.path.abspath(MODEL_PATH)
+
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(
+                f"Model dosyasi bulunamadi: {model_path}\n"
+                f"config.py MODEL_PATH degerini kontrol edin."
+            )
+
+        if not os.path.isfile(model_path):
+            raise FileNotFoundError(f"Model yolu bir dosya degil: {model_path}")
+
+        if os.path.getsize(model_path) == 0:
+            raise ValueError(f"Model dosyasi bos: {model_path}")
+
+        _, ext = os.path.splitext(model_path)
+        if ext.lower() not in _VALID_MODEL_EXTENSIONS:
+            raise ValueError(
+                f"Desteklenmeyen model uzantisi: {ext}\n"
+                f"Gecerli uzantilar: {', '.join(_VALID_MODEL_EXTENSIONS)}"
+            )
 
     def detect(self, frame):
 
@@ -46,5 +79,7 @@ class DetectorSystem:
                 "confidence": conf,
                 "box": (x1, y1, x2, y2)
             })
+
+        detections.sort(key=lambda item: item["confidence"], reverse=True)
 
         return detections

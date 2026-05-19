@@ -1,6 +1,37 @@
-ultralytics
-opencv-python
-torch
-torchvision
-numpy
-gpiozero
+# =============================================================================
+# TEKNOFEST IHA - Python bagimliliklari
+# =============================================================================
+# Proje analizi: camera.py, mission.py, ui.py -> opencv-python
+#                 detector.py -> ultralytics (+ torch ekosistemi)
+#                 payload.py, servo_test.py -> gpiozero (yalnizca Raspberry Pi)
+#
+# Raspberry Pi notlari:
+#   - 64-bit Raspberry Pi OS (Bullseye/Bookworm) onerilir.
+#   - GPIO paketleri yalnizca gercek Pi uzerinde gereklidir; gelistirme PC'sinde
+#     payload.py GPIO yoksa test moduna duser.
+#   - torch/torchvision Pi'de buyuk paketlerdir; kurulum uzun surebilir.
+#     Resmi PyTorch aarch64 wheel'leri 64-bit Pi OS ile uyumludur.
+#   - Kurulum: python3 -m venv venv && source venv/bin/activate
+#              pip install -U pip
+#              pip install -r requirements.txt
+# =============================================================================
+
+# --- Gorus isleme (kamera, arayuz, video kaydi) ---
+# cv2.imshow kullanildigi icin headless degil, tam opencv-python paketi gerekir.
+opencv-python>=4.8.0,<5.0.0
+
+# --- Sayisal hesap (OpenCV / YOLO ortak temel) ---
+numpy>=1.23.0,<2.3.0
+
+# --- Derin ogrenme cekirdegi (ultralytics tarafindan kullanilir) ---
+# detector.py -> YOLO inference
+torch>=2.0.0,<3.0.0
+torchvision>=0.15.0,<1.0.0
+
+# --- Nesne algilama ---
+# matplotlib, pillow, pyyaml vb. transitif bagimliliklari kendi getirir.
+ultralytics>=8.2.0,<9.0.0
+
+# --- Raspberry Pi GPIO (servo / yuk birakma) ---
+# Windows veya GPIO'suz ortamda kurulum basarili olabilir; kod test moduna gecer.
+gpiozero>=2.0,<3.0
