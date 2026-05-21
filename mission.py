@@ -1,9 +1,9 @@
 # mission.py
 
-import cv2
 import time
 
 from config import STABLE_LIMIT, VIDEO_OUTPUT_NAME
+
 from camera import CameraSystem
 from detector import DetectorSystem
 from payload import PayloadSystem
@@ -11,6 +11,8 @@ from targeting import TargetingSystem
 from ui import UISystem
 from logger import LoggerSystem
 from failsafe import FailsafeSystem
+
+import cv2
 
 
 class MissionSystem:
@@ -84,8 +86,8 @@ class MissionSystem:
         if self.video_writer is not None:
             self.video_writer.write(frame)
 
-        cv2.imshow("TEKNOFEST IHA GOREV SISTEMI", frame)
-        cv2.waitKey(2000)
+        print("GOREV TAMAMLANDI")
+        time.sleep(2)
 
     def start(self):
         if not self.camera.is_opened():
@@ -180,20 +182,11 @@ class MissionSystem:
             if self.video_writer is not None:
                 self.video_writer.write(frame)
 
-            cv2.imshow("TEKNOFEST IHA GOREV SISTEMI", frame)
-
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
-
-        self.stop()
-
     def stop(self):
         self.camera.release()
 
         if self.video_writer is not None:
             self.video_writer.release()
-
-        cv2.destroyAllWindows()
 
         print("Sistem kapatildi.")
         self.logger.system_stopped()
