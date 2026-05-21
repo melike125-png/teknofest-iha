@@ -1,38 +1,110 @@
-# config.py
+# =========================================
+# MODEL
+# =========================================
 
-PROJECT_NAME = "TEKNOFEST IHA GOREV SISTEMI"
+MODEL_PATH = "models/best.pt"
 
-MODEL_PATH = "best.pt"
+CONF_LIMIT = 0.60
 
-CAMERA_INDEX = 0
+
+# =========================================
+# KAMERA
+# =========================================
 
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 
-CONF_LIMIT = 0.50
-IOU_LIMIT = 0.10
-MAX_DETECTION = 1
+CAMERA_INDEX = 0
 
-CENTER_TOLERANCE = 80
-STABLE_LIMIT = 5
 
-TARGET_BLUE_HEXAGON = "mavi_altigen"
-TARGET_RED_TRIANGLE = "kirmizi_ucgen"
-
-TARGET_CLASSES = [
-    TARGET_BLUE_HEXAGON,
-    TARGET_RED_TRIANGLE
-]
+# =========================================
+# VIDEO
+# =========================================
 
 VIDEO_OUTPUT_NAME = "test_kaydi.mp4"
 
-SERVO_RED_PAYLOAD_PIN = 17
-SERVO_BLUE_PAYLOAD_PIN = 27
+
+# =========================================
+# SERVO
+# =========================================
+
+SERVO_1_PIN = 17
+SERVO_2_PIN = 18
 
 SERVO_CLOSED_ANGLE = 60
 SERVO_OPEN_ANGLE = 120
 
-TARGET_TO_PAYLOAD = {
-    TARGET_BLUE_HEXAGON: "red_payload",
-    TARGET_RED_TRIANGLE: "blue_payload"
-}
+
+# =========================================
+# HEDEF MERKEZLEME
+# =========================================
+
+CENTER_TOLERANCE_X = 40
+CENTER_TOLERANCE_Y = 40
+
+STABLE_LIMIT = 15
+
+
+# =========================================
+# GOREV AYARLARI
+# =========================================
+
+SEARCH_AREA_WIDTH = 30
+SEARCH_AREA_LENGTH = 200
+
+SEARCH_LINE_SPACING = 5
+
+MISSION_ALTITUDE = 25
+DROP_ALTITUDE = 10
+
+
+# =========================================
+# PID AYARLARI
+# =========================================
+
+PID_X_KP = 0.4
+PID_X_KI = 0.01
+PID_X_KD = 0.15
+
+PID_Y_KP = 0.4
+PID_Y_KI = 0.01
+PID_Y_KD = 0.15
+
+
+# =========================================
+# SONSUZ 8
+# =========================================
+
+INFINITY8_RADIUS = 15
+INFINITY8_POINT_COUNT = 80
+
+
+# =========================================
+# STREAM
+# =========================================
+
+STREAM_WIDTH = 640
+STREAM_HEIGHT = 480
+
+
+# =========================================
+# MEMORY
+# =========================================
+
+TARGET_MEMORY_TIMEOUT = 2.0
+
+
+# =========================================
+# FAILSAFE
+# =========================================
+
+MIN_FPS = 5
+
+MAX_TARGET_LOST_TIME = 5
+
+
+# =========================================
+# LOGGER
+# =========================================
+
+LOG_FILE_NAME = "mission_log.txt"
