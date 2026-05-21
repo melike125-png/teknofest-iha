@@ -1,92 +1,50 @@
 # targeting.py
 
-from config import CENTER_TOLERANCE
+from config import (
+    CENTER_TOLERANCE_X,
+    CENTER_TOLERANCE_Y,
+    STABLE_LIMIT
+)
 
 
 class TargetingSystem:
 
-    def movement_level(self, error):
-        abs_error = abs(error)
+    def __init__(self):
 
-        if abs_error < 80:
-            return "MERKEZE YAKIN"
-        elif abs_error < 160:
-            return "AZ"
-        elif abs_error < 280:
-            return "ORTA"
-        else:
-            return "COK"
+        self.stable_counter = 0
 
-    def calculate_direction(self, error_x, error_y):
-        horizontal = ""
-        vertical = ""
-
-        x_level = self.movement_level(error_x)
-        y_level = self.movement_level(error_y)
-
-        if error_x > CENTER_TOLERANCE:
-            horizontal = f"{x_level} SAGDA"
-        elif error_x < -CENTER_TOLERANCE:
-            horizontal = f"{x_level} SOLDA"
-
-        if error_y > CENTER_TOLERANCE:
-            vertical = f"{y_level} ASAGIDA"
-        elif error_y < -CENTER_TOLERANCE:
-            vertical = f"{y_level} YUKARIDA"
-
-        return f"{horizontal} {vertical}".strip()
-
-    def find_best_target(self, detections, completed_targets, frame):
-        frame_height, frame_width, _ = frame.shape
-
-        frame_center_x = frame_width // 2
-        frame_center_y = frame_height // 2
-
-        best_detection = None
-        best_area = 0
-
-        for detection in detections:
-            class_name = detection["class_name"]
-
-            if class_name not in completed_targets:
-                continue
-
-            if completed_targets[class_name]:
-                continue
-
-            x1, y1, x2, y2 = detection["box"]
-            area = (x2 - x1) * (y2 - y1)
-
-            if area > best_area:
-                best_area = area
-                best_detection = detection
-
-        if best_detection is None:
-            return None
-
-        x1, y1, x2, y2 = best_detection["box"]
-
-        target_center_x = (x1 + x2) // 2
-        target_center_y = (y1 + y2) // 2
+    def calculate_error(
+        self,
+        target_center_x,
+        target_center_y,
+        frame_center_x,
+        frame_center_y
+    ):
 
         error_x = target_center_x - frame_center_x
         error_y = target_center_y - frame_center_y
 
-        is_centered = (
-            abs(error_x) < CENTER_TOLERANCE
-            and abs(error_y) < CENTER_TOLERANCE
+        return error_x, error_y
+
+    def target_is_centered(self, error_x, error_y):
+
+        return (
+            abs(error_x) < CENTER_TOLERANCE_X
+            and
+            abs(error_y) < CENTER_TOLERANCE_Y
         )
 
-        direction = self.calculate_direction(error_x, error_y)
+    def update_stable_counter(self, centered):
 
-        return {
-            "class_name": best_detection["class_name"],
-            "confidence": best_detection["confidence"],
-            "box": best_detection["box"],
-            "target_center": (target_center_x, target_center_y),
-            "frame_center": (frame_center_x, frame_center_y),
-            "error_x": error_x,
-            "error_y": error_y,
-            "is_centered": is_centered,
-            "direction": direction
-        }
+        if centered:
+            self.stable_counter += 1
+        else:
+            self.stable_counter = 0
+
+    def ready_to_drop(self):
+
+        return self.stable_counter >= STABLE_LIMIT
+
+    def reset(self):
+
+        self.stable_counter = 0
