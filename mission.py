@@ -1,13 +1,9 @@
+# mission.py
+
 import cv2
 import time
 
-from config import (
-    PAYLOAD_ORDER,
-    PAYLOAD_TARGET_MAP,
-    STABLE_LIMIT,
-    VIDEO_OUTPUT_NAME
-)
-
+from config import STABLE_LIMIT, VIDEO_OUTPUT_NAME
 from camera import CameraSystem
 from detector import DetectorSystem
 from payload import PayloadSystem
@@ -20,7 +16,6 @@ from failsafe import FailsafeSystem
 class MissionSystem:
 
     def __init__(self):
-
         self.logger = LoggerSystem()
         self.logger.system_started()
 
@@ -32,31 +27,22 @@ class MissionSystem:
         self.targeting = TargetingSystem()
         self.ui = UISystem()
 
-        self.current_payload_index = 0
+        self.completed_targets = {
+            "mavi_altigen": False,
+            "kirmizi_ucgen": False
+        }
+
         self.stable_count = 0
         self.prev_time = 0
-        self.last_no_target_log_time = 0
-
         self.video_writer = None
 
-    def get_current_payload(self):
-
-        if self.current_payload_index < len(PAYLOAD_ORDER):
-            return PAYLOAD_ORDER[self.current_payload_index]
-
-        return None
-
-    def get_current_target(self):
-
-        current_payload = self.get_current_payload()
-
-        if current_payload is None:
-            return None
-
-        return PAYLOAD_TARGET_MAP[current_payload]
+    def all_targets_completed(self):
+        return (
+            self.completed_targets["mavi_altigen"]
+            and self.completed_targets["kirmizi_ucgen"]
+        )
 
     def calculate_fps(self):
-
         current_time = time.time()
 
         if self.prev_time == 0:
@@ -65,11 +51,9 @@ class MissionSystem:
             fps = 1 / (current_time - self.prev_time)
 
         self.prev_time = current_time
-
         return fps
 
     def start_video_recording(self):
-
         width = self.camera.get_width()
         height = self.camera.get_height()
 
@@ -83,7 +67,6 @@ class MissionSystem:
         )
 
     def finish_mission(self, frame, target_data, fps):
-
         status = "GOREV TAMAMLANDI"
         direction = "TUM YUKLER BIRAKILDI"
 
@@ -105,7 +88,6 @@ class MissionSystem:
         cv2.waitKey(2000)
 
     def start(self):
-
         if not self.camera.is_opened():
             print("Kamera acilamadi.")
             self.logger.camera_failed()
@@ -113,14 +95,12 @@ class MissionSystem:
             return
 
         self.logger.camera_opened()
-
         self.start_video_recording()
 
         print("Gorev basladi.")
         self.logger.write_log("GOREV BASLADI")
 
         while True:
-
             frame = self.camera.read_frame()
 
             if frame is None:
@@ -133,27 +113,26 @@ class MissionSystem:
             fps = self.calculate_fps()
 
             failsafe_status = self.failsafe.get_status(fps)
-
-            current_payload = self.get_current_payload()
-            current_target = self.get_current_target()
+            print(failsafe_status)
 
             detections = self.detector.detect(frame)
 
             target_data = self.targeting.find_best_target(
-                detections,
-                current_target,
-                frame
+                detections=detections,
+                completed_targets=self.completed_targets,
+                frame=frame
             )
 
             status = "HEDEF YOK"
             direction = "ARAMA MODU"
+            current_target = None
 
-            if current_payload is None or current_target is None:
-
+            if self.all_targets_completed():
                 self.finish_mission(frame, target_data, fps)
                 break
 
             elif target_data is not None:
+                current_target = target_data["class_name"]
 
                 self.failsafe.update_target_time()
 
@@ -170,17 +149,14 @@ class MissionSystem:
                     direction = "MERKEZDE"
 
                     if self.stable_count >= STABLE_LIMIT:
-                        status = f"{current_payload} YUK BIRAKILDI"
+                        status = "YUK BIRAKILDI"
 
-                        self.payload.drop_payload(current_payload)
+                        self.payload.drop_payload(current_target)
+                        self.logger.payload_dropped(current_target)
 
-                        self.logger.write_log(
-                            f"{current_payload} YUK -> {current_target} HEDEFINE BIRAKILDI"
-                        )
+                        self.completed_targets[current_target] = True
 
-                        self.current_payload_index += 1
                         self.stable_count = 0
-
                         time.sleep(1)
 
                 else:
@@ -190,13 +166,7 @@ class MissionSystem:
 
             else:
                 self.stable_count = 0
-
-                current_time = time.time()
-
-                if current_time - self.last_no_target_log_time > 1:
-                    print(failsafe_status)
-                    self.logger.target_lost()
-                    self.last_no_target_log_time = current_time
+                self.logger.target_lost()
 
             self.ui.draw(
                 frame=frame,
@@ -218,7 +188,6 @@ class MissionSystem:
         self.stop()
 
     def stop(self):
-
         self.camera.release()
 
         if self.video_writer is not None:

@@ -1,3 +1,5 @@
+# config.py
+
 PROJECT_NAME = "TEKNOFEST IHA GOREV SISTEMI"
 
 MODEL_PATH = "best.pt"
@@ -9,25 +11,28 @@ FRAME_HEIGHT = 480
 
 CONF_LIMIT = 0.50
 IOU_LIMIT = 0.10
-MAX_DETECTION = 5
+MAX_DETECTION = 1
 
 CENTER_TOLERANCE = 80
 STABLE_LIMIT = 5
 
-# Yarisma oncesi sadece burayi degistireceksin
-# Alttaki yuk hangisiyse onu ilk yaz
-PAYLOAD_ORDER = [
-    "mavi",
-    "kirmizi"
-]
+TARGET_BLUE_HEXAGON = "mavi_altigen"
+TARGET_RED_TRIANGLE = "kirmizi_ucgen"
 
-# Gorev kurali
-PAYLOAD_TARGET_MAP = {
-    "mavi": "kirmizi_ucgen",
-    "kirmizi": "mavi_altigen"
-}
+TARGET_CLASSES = [
+    TARGET_BLUE_HEXAGON,
+    TARGET_RED_TRIANGLE
+]
 
 VIDEO_OUTPUT_NAME = "test_kaydi.mp4"
 
-# Tek servo kullaniyoruz
-DROP_SERVO_PIN = 17
+SERVO_RED_PAYLOAD_PIN = 17
+SERVO_BLUE_PAYLOAD_PIN = 27
+
+SERVO_CLOSED_ANGLE = 60
+SERVO_OPEN_ANGLE = 120
+
+TARGET_TO_PAYLOAD = {
+    TARGET_BLUE_HEXAGON: "red_payload",
+    TARGET_RED_TRIANGLE: "blue_payload"
+}
