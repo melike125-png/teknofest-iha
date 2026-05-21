@@ -1,95 +1,37 @@
+# flight_controller.py
+
 class FlightController:
 
-
-
-    _NO_MOVE_DIRECTIONS = {"", "CENTER", "MERKEZDE"}
-
-
-
-    _DIRECTION_MESSAGES = {
-
-        "LEFT": "Drone sola kaymali.",
-
-        "RIGHT": "Drone saga kaymali.",
-
-        "UP": "Drone ileri gitmeli.",
-
-        "DOWN": "Drone geri gitmeli.",
-
-    }
-
-
-
     def __init__(self):
-
         self.connected = False
 
-        print("Flight controller test modu acildi.")
+    def connect(self):
+        print("Pixhawk baglantisi simdilik test modunda.")
+        self.connected = False
 
+    def takeoff(self, altitude):
+        print(f"TEST MODU -> {altitude} metreye kalkis")
 
+    def move_to_point(self, x, y, altitude):
+        print(f"TEST MODU -> Noktaya git: X={x}, Y={y}, Irtifa={altitude}")
 
-    def move_by_direction(self, direction):
+    def search_forward(self):
+        print("TEST MODU -> Ileri tarama")
 
+    def yaw_scan(self, angle):
+        print(f"TEST MODU -> Yaw tarama: {angle} derece")
 
+    def approach_target(self, error_x, error_y):
+        print(f"TEST MODU -> Hedefe yaklas | X hata: {error_x}, Y hata: {error_y}")
 
-        if direction in self._NO_MOVE_DIRECTIONS:
+    def descend(self, altitude):
+        print(f"TEST MODU -> {altitude} metreye alcal")
 
-            print("Hedef merkezde, hareket yok.")
+    def ascend(self, altitude):
+        print(f"TEST MODU -> {altitude} metreye yuksel")
 
-            return
-
-
-
-        print("=" * 40)
-
-        print("UCUS KOMUTU")
-
-        print(f"Yon bilgisi: {direction}")
-
-
-
-        movement_found = False
-
-
-
-        for part in direction.upper().split():
-
-            message = self._DIRECTION_MESSAGES.get(part)
-
-
-
-            if message is not None:
-
-                print(message)
-
-                movement_found = True
-
-
-
-        if not movement_found:
-
-            print("Simulasyon: Bu yon icin hareket komutu tanimli degil.")
-
-
-
-        print("=" * 40)
-
-
-
-    def stop(self):
-
-        print("Drone hareketi durduruldu.")
-
-
+    def hover(self):
+        print("TEST MODU -> Hover")
 
     def land(self):
-
-        print("Inis komutu verildi.")
-
-
-
-    def failsafe_hold(self):
-
-        print("Failsafe: Drone sabit bekleme moduna alinmali.")
-
-
+        print("TEST MODU -> Inis")
