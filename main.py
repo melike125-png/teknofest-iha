@@ -3,6 +3,7 @@
 from config import PROJECT_NAME
 from mission import MissionSystem
 
+
 def main():
 
     print("=" * 50)
@@ -13,6 +14,7 @@ def main():
     mission = MissionSystem()
 
     mission.start()
+
 
 if __name__ == "__main__":
     main()

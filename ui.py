@@ -15,6 +15,7 @@ class UISystem:
         frame_center_x = frame_width // 2
         frame_center_y = frame_height // 2
 
+        # Kamera merkezi: mavi nokta
         cv2.circle(
             frame,
             (frame_center_x, frame_center_y),
@@ -23,6 +24,53 @@ class UISystem:
             -1
         )
 
+        # Merkez referans çizgileri
+        cv2.line(
+            frame,
+            (frame_center_x - 25, frame_center_y),
+            (frame_center_x + 25, frame_center_y),
+            (255, 0, 0),
+            2
+        )
+
+        cv2.line(
+            frame,
+            (frame_center_x, frame_center_y - 25),
+            (frame_center_x, frame_center_y + 25),
+            (255, 0, 0),
+            2
+        )
+
+        y = 35
+
+        # Sıradaki hedef bilgisi
+        if current_target is not None:
+
+            cv2.putText(
+                frame,
+                f"SIRADAKI HEDEF: {current_target}",
+                (20, y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 255, 0),
+                2
+            )
+
+        else:
+
+            cv2.putText(
+                frame,
+                "SIRADAKI HEDEF: YOK",
+                (20, y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 255, 0),
+                2
+            )
+
+        y += 35
+
+        # Eğer doğru sıradaki hedef algılandıysa kutu çizilir.
         if target_data is not None:
 
             x1, y1, x2, y2 = target_data["box"]
@@ -40,6 +88,7 @@ class UISystem:
                 2
             )
 
+            # Hedef merkezi: kırmızı nokta
             cv2.circle(
                 frame,
                 (target_center_x, target_center_y),
@@ -48,6 +97,7 @@ class UISystem:
                 -1
             )
 
+            # Kamera merkezi ile hedef merkezi arasındaki çizgi
             cv2.line(
                 frame,
                 (frame_center_x, frame_center_y),
@@ -58,7 +108,7 @@ class UISystem:
 
             cv2.putText(
                 frame,
-                f"{class_name} {confidence:.2f}",
+                f"HEDEF: {class_name} {confidence:.2f}",
                 (x1, y1 - 10),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
@@ -68,84 +118,100 @@ class UISystem:
 
             cv2.putText(
                 frame,
-                f"Sinif: {class_name}",
-                (20, 40),
+                f"ALGILANAN: {class_name}",
+                (20, y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 255, 0),
+                2
+            )
+
+            y += 35
+
+            cv2.putText(
+                frame,
+                f"GUVEN: {confidence:.2f}",
+                (20, y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 255, 0),
+                2
+            )
+
+            y += 35
+
+            cv2.putText(
+                frame,
+                f"X HATA: {error_x}",
+                (20, y),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
                 (255, 255, 255),
                 2
             )
 
+            y += 35
+
             cv2.putText(
                 frame,
-                f"X hata: {error_x}",
-                (20, 70),
+                f"Y HATA: {error_y}",
+                (20, y),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
                 (255, 255, 255),
                 2
             )
 
-            cv2.putText(
-                frame,
-                f"Y hata: {error_y}",
-                (20, 100),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (255, 255, 255),
-                2
-            )
-
-        if current_target is not None:
-
-            cv2.putText(
-                frame,
-                f"AKTIF HEDEF: {current_target}",
-                (20, 140),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (255, 255, 0),
-                2
-            )
+            y += 35
 
         else:
 
             cv2.putText(
                 frame,
-                "GOREV TAMAMLANDI",
-                (20, 140),
+                "DOGRU HEDEF ALGILANMADI",
+                (20, y),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                (0, 255, 0),
-                3
+                0.7,
+                (0, 255, 255),
+                2
             )
 
+            y += 35
+
+        # Durum bilgisi
         cv2.putText(
             frame,
-            status,
-            (20, 180),
+            f"DURUM: {status}",
+            (20, y),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.9,
+            0.7,
             (0, 255, 255),
             2
         )
 
+        y += 35
+
+        # Yön bilgisi
         cv2.putText(
             frame,
             f"YON: {direction}",
-            (20, 220),
+            (20, y),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
+            0.7,
             (0, 255, 255),
             2
         )
 
+        y += 35
+
+        # FPS bilgisi
         cv2.putText(
             frame,
             f"FPS: {fps:.1f}",
-            (20, 260),
+            (20, y),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
+            0.7,
             (255, 255, 255),
             2
         )
+
