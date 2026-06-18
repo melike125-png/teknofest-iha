@@ -2,11 +2,40 @@
 
 import cv2
 
+from config import (
+    TARGET_BLUE_HEXAGON,
+    TARGET_RED_TRIANGLE
+)
+
 
 class UISystem:
 
     def __init__(self):
         pass
+
+    def get_payload_info(self, current_target):
+
+        if current_target == TARGET_BLUE_HEXAGON:
+            return "kirmizi_yuk", "Servo 1"
+
+        elif current_target == TARGET_RED_TRIANGLE:
+            return "mavi_yuk", "Servo 2"
+
+        else:
+            return "yok", "yok"
+
+    def draw_text(self, frame, text, x, y, color, scale=0.48, thickness=1):
+
+        cv2.putText(
+            frame,
+            text,
+            (x, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            scale,
+            color,
+            thickness,
+            cv2.LINE_AA
+        )
 
     def draw(self, frame, target_data, current_target, status, direction, fps):
 
@@ -15,62 +44,130 @@ class UISystem:
         frame_center_x = frame_width // 2
         frame_center_y = frame_height // 2
 
-        # Kamera merkezi: mavi nokta
+        # Kamera merkezi
         cv2.circle(
             frame,
             (frame_center_x, frame_center_y),
-            7,
+            5,
             (255, 0, 0),
             -1
         )
 
-        # Merkez referans çizgileri
         cv2.line(
             frame,
-            (frame_center_x - 25, frame_center_y),
-            (frame_center_x + 25, frame_center_y),
+            (frame_center_x - 18, frame_center_y),
+            (frame_center_x + 18, frame_center_y),
             (255, 0, 0),
             2
         )
 
         cv2.line(
             frame,
-            (frame_center_x, frame_center_y - 25),
-            (frame_center_x, frame_center_y + 25),
+            (frame_center_x, frame_center_y - 18),
+            (frame_center_x, frame_center_y + 18),
             (255, 0, 0),
             2
         )
 
-        y = 35
+        payload_name, servo_name = self.get_payload_info(current_target)
 
-        # Sıradaki hedef bilgisi
-        if current_target is not None:
+        # Sol üst kompakt görev paneli
+        panel_x1 = 10
+        panel_y1 = 10
+        panel_x2 = min(frame_width - 10, 410)
+        panel_y2 = 205
 
-            cv2.putText(
-                frame,
-                f"SIRADAKI HEDEF: {current_target}",
-                (20, y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (255, 255, 0),
-                2
-            )
+        cv2.rectangle(
+            frame,
+            (panel_x1, panel_y1),
+            (panel_x2, panel_y2),
+            (0, 0, 0),
+            -1
+        )
 
-        else:
+        cv2.rectangle(
+            frame,
+            (panel_x1, panel_y1),
+            (panel_x2, panel_y2),
+            (255, 255, 255),
+            1
+        )
 
-            cv2.putText(
-                frame,
-                "SIRADAKI HEDEF: YOK",
-                (20, y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (255, 255, 0),
-                2
-            )
+        x = 22
+        y = 32
+        line_gap = 24
 
-        y += 35
+        self.draw_text(
+            frame,
+            "TEKNOFEST IHA GOREV SISTEMI",
+            x,
+            y,
+            (0, 255, 255),
+            scale=0.50,
+            thickness=1
+        )
 
-        # Eğer doğru sıradaki hedef algılandıysa kutu çizilir.
+        y += line_gap
+
+        self.draw_text(
+            frame,
+            "GOREV: 2 - YUK BIRAKMA",
+            x,
+            y,
+            (255, 255, 255)
+        )
+
+        y += line_gap
+
+        self.draw_text(
+            frame,
+            f"SIRADAKI: {current_target if current_target is not None else 'YOK'}",
+            x,
+            y,
+            (255, 255, 0)
+        )
+
+        y += line_gap
+
+        self.draw_text(
+            frame,
+            f"YUK: {payload_name}   SERVO: {servo_name}",
+            x,
+            y,
+            (0, 255, 255)
+        )
+
+        y += line_gap
+
+        self.draw_text(
+            frame,
+            f"DURUM: {status}",
+            x,
+            y,
+            (0, 255, 255)
+        )
+
+        y += line_gap
+
+        self.draw_text(
+            frame,
+            f"YON: {direction}",
+            x,
+            y,
+            (0, 255, 255)
+        )
+
+        y += line_gap
+
+        self.draw_text(
+            frame,
+            f"FPS: {fps:.1f}",
+            x,
+            y,
+            (255, 255, 255)
+        )
+
+        # Doğru hedef algılandıysa kutu ve hedef bilgisi çizilir.
         if target_data is not None:
 
             x1, y1, x2, y2 = target_data["box"]
@@ -88,7 +185,6 @@ class UISystem:
                 2
             )
 
-            # Hedef merkezi: kırmızı nokta
             cv2.circle(
                 frame,
                 (target_center_x, target_center_y),
@@ -97,7 +193,6 @@ class UISystem:
                 -1
             )
 
-            # Kamera merkezi ile hedef merkezi arasındaki çizgi
             cv2.line(
                 frame,
                 (frame_center_x, frame_center_y),
@@ -108,110 +203,72 @@ class UISystem:
 
             cv2.putText(
                 frame,
-                f"HEDEF: {class_name} {confidence:.2f}",
-                (x1, y1 - 10),
+                f"{class_name} {confidence:.2f}",
+                (x1, max(25, y1 - 8)),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
+                0.55,
                 (0, 255, 0),
-                2
+                2,
+                cv2.LINE_AA
             )
 
-            cv2.putText(
+            # Alt sol küçük hedef paneli
+            info_x1 = 10
+            info_y1 = frame_height - 95
+            info_x2 = min(frame_width - 10, 360)
+            info_y2 = frame_height - 10
+
+            cv2.rectangle(
+                frame,
+                (info_x1, info_y1),
+                (info_x2, info_y2),
+                (0, 0, 0),
+                -1
+            )
+
+            cv2.rectangle(
+                frame,
+                (info_x1, info_y1),
+                (info_x2, info_y2),
+                (0, 255, 0),
+                1
+            )
+
+            self.draw_text(
                 frame,
                 f"ALGILANAN: {class_name}",
-                (20, y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
+                22,
+                frame_height - 68,
                 (0, 255, 0),
-                2
+                scale=0.48
             )
 
-            y += 35
-
-            cv2.putText(
+            self.draw_text(
                 frame,
                 f"GUVEN: {confidence:.2f}",
-                (20, y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
+                22,
+                frame_height - 43,
                 (0, 255, 0),
-                2
+                scale=0.48
             )
 
-            y += 35
-
-            cv2.putText(
+            self.draw_text(
                 frame,
-                f"X HATA: {error_x}",
-                (20, y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
+                f"X: {error_x}   Y: {error_y}",
+                22,
+                frame_height - 18,
                 (255, 255, 255),
-                2
+                scale=0.48
             )
-
-            y += 35
-
-            cv2.putText(
-                frame,
-                f"Y HATA: {error_y}",
-                (20, y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (255, 255, 255),
-                2
-            )
-
-            y += 35
 
         else:
 
-            cv2.putText(
+            self.draw_text(
                 frame,
                 "DOGRU HEDEF ALGILANMADI",
-                (20, y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
+                20,
+                frame_height - 25,
                 (0, 255, 255),
-                2
+                scale=0.55,
+                thickness=2
             )
-
-            y += 35
-
-        # Durum bilgisi
-        cv2.putText(
-            frame,
-            f"DURUM: {status}",
-            (20, y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (0, 255, 255),
-            2
-        )
-
-        y += 35
-
-        # Yön bilgisi
-        cv2.putText(
-            frame,
-            f"YON: {direction}",
-            (20, y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (0, 255, 255),
-            2
-        )
-
-        y += 35
-
-        # FPS bilgisi
-        cv2.putText(
-            frame,
-            f"FPS: {fps:.1f}",
-            (20, y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (255, 255, 255),
-            2
-        )
-

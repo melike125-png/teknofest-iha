@@ -15,8 +15,8 @@ class FlightController:
 
     def __init__(self):
 
-        # Simdilik gercek Pixhawk baglantisi yok.
-        # Bu yuzden test modunda print ile calisiyor.
+        # Simdilik gercek Pixhawk / Cube Orange baglantisi yok.
+        # Bu yuzden test modunda sadece terminal mesajlariyla calisiyor.
         self.connected = False
 
     def connect(self):
@@ -30,7 +30,10 @@ class FlightController:
 
     def move_to_point(self, x, y, altitude=MISSION_ALTITUDE):
 
-        print(f"TEST MODU -> Noktaya git: X={x:.2f}, Y={y:.2f}, Irtifa={altitude}")
+        # 8 cizme gorevi sirasinda cok fazla nokta olustugu icin
+        # artik her noktayi terminale yazdirmiyoruz.
+        # Fonksiyon bos kalmasin diye pass yaziyoruz.
+        pass
 
     def search_forward(self):
 
