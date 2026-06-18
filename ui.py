@@ -4,7 +4,8 @@ import cv2
 
 from config import (
     TARGET_BLUE_HEXAGON,
-    TARGET_RED_TRIANGLE
+    TARGET_RED_TRIANGLE,
+    STABLE_LIMIT
 )
 
 
@@ -37,7 +38,16 @@ class UISystem:
             cv2.LINE_AA
         )
 
-    def draw(self, frame, target_data, current_target, status, direction, fps):
+    def draw(
+        self,
+        frame,
+        target_data,
+        current_target,
+        status,
+        direction,
+        fps,
+        stable_count=0
+    ):
 
         frame_height, frame_width, _ = frame.shape
 
@@ -75,7 +85,7 @@ class UISystem:
         panel_x1 = 10
         panel_y1 = 10
         panel_x2 = min(frame_width - 10, 410)
-        panel_y2 = 205
+        panel_y2 = 230
 
         cv2.rectangle(
             frame,
@@ -155,6 +165,17 @@ class UISystem:
             x,
             y,
             (0, 255, 255)
+        )
+
+        y += line_gap
+
+        # Profesyonel kilit sayacı
+        self.draw_text(
+            frame,
+            f"KILIT: {stable_count}/{STABLE_LIMIT}",
+            x,
+            y,
+            (0, 255, 0)
         )
 
         y += line_gap

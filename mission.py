@@ -38,6 +38,8 @@ class MissionSystem:
         self.ui = UISystem()
         self.flight_controller = FlightController()
 
+        # Görevde tamamlanan hedefler burada tutulur.
+        # İlk başta ikisi de tamamlanmamış olur.
         self.completed_targets = {
             TARGET_BLUE_HEXAGON: False,
             TARGET_RED_TRIANGLE: False
@@ -46,15 +48,17 @@ class MissionSystem:
         self.stable_count = 0
         self.prev_time = 0
         self.video_writer = None
+
+        # 1. görev olan 8 çizme görevi bir kere yapılsın diye kullanılır.
         self.infinity8_done = False
 
-        # Terminalin cok dolmasini engellemek icin zamanlayicilar.
+        # Terminalin çok dolmasını engellemek için zamanlayıcılar.
         self.last_target_log_time = 0
         self.last_lost_log_time = 0
         self.last_wrong_target_log_time = 0
         self.last_approach_log_time = 0
 
-        # Ayni mesajlari surekli yazmamak icin bekleme araliklari.
+        # Aynı mesajları her karede yazmamak için aralıklar.
         self.TARGET_LOG_INTERVAL = 0.7
         self.LOST_LOG_INTERVAL = 1.0
         self.WRONG_TARGET_LOG_INTERVAL = 1.0
@@ -62,6 +66,9 @@ class MissionSystem:
 
     def get_expected_target(self):
 
+        # Sıradaki hedefi targeting.py içindeki görev sırasına göre alıyoruz.
+        # İlk başta mavi_altigen döner.
+        # Mavi altıgen tamamlandıktan sonra kirmizi_ucgen döner.
         return self.targeting.get_current_mission_target(
             self.completed_targets
         )
@@ -130,17 +137,22 @@ class MissionSystem:
         print(f"Hedef: {current_target}")
         print("=" * 50)
 
+        # Hedef merkezdeyken önce hover.
         self.flight_controller.hover()
         time.sleep(0.5)
 
+        # Yük bırakma irtifasına alçal.
         self.flight_controller.descend(DROP_ALTITUDE)
         time.sleep(1)
 
+        # İrtifa azaldıktan sonra ilgili servo açılır.
         self.payload.drop_payload(current_target)
 
+        # Yük bırakıldıktan sonra tekrar görev irtifasına yüksel.
         time.sleep(0.5)
         self.flight_controller.ascend(MISSION_ALTITUDE)
 
+        # Tekrar hover.
         time.sleep(0.5)
         self.flight_controller.hover()
 
@@ -161,7 +173,8 @@ class MissionSystem:
             current_target=None,
             status=status,
             direction=direction,
-            fps=fps
+            fps=fps,
+            stable_count=0
         )
 
         if self.video_writer is not None:
@@ -175,6 +188,13 @@ class MissionSystem:
         time.sleep(2)
 
     def find_wrong_detected_target(self, detections, expected_target):
+
+        # Model bir şey gördü ama sıradaki hedef o değilse
+        # bunu yanlış hedef olarak göstereceğiz.
+        #
+        # Örnek:
+        # Beklenen hedef mavi_altigen iken kirmizi_ucgen görünürse
+        # sistem bunu yok sayar.
 
         if expected_target is None:
             return None
@@ -190,6 +210,8 @@ class MissionSystem:
 
     def start(self):
 
+        # Önce 1. görev yapılır.
+        # Şu an PC test modunda sadece terminal mesajı olarak çalışır.
         self.perform_first_mission()
 
         print("=" * 50)
@@ -227,6 +249,9 @@ class MissionSystem:
 
             detections = self.detector.detect(frame)
 
+            # targeting.py sadece sıradaki hedefi seçecek.
+            # Mesela sıradaki hedef mavi_altigen ise,
+            # kirmizi_ucgen algılansa bile target_data None döner.
             target_data = self.targeting.find_best_target(
                 detections=detections,
                 completed_targets=self.completed_targets,
@@ -258,7 +283,10 @@ class MissionSystem:
 
                 current_time = time.time()
 
-                if self.can_print(self.last_target_log_time, self.TARGET_LOG_INTERVAL):
+                if self.can_print(
+                    self.last_target_log_time,
+                    self.TARGET_LOG_INTERVAL
+                ):
 
                     self.failsafe.update_target_time()
 
@@ -287,6 +315,7 @@ class MissionSystem:
 
                         self.logger.payload_dropped(detected_target)
 
+                        # Sadece doğru sıradaki hedef tamamlandı olarak işaretlenir.
                         self.completed_targets[detected_target] = True
 
                         self.stable_count = 0
@@ -311,7 +340,10 @@ class MissionSystem:
 
                     current_time = time.time()
 
-                    if self.can_print(self.last_approach_log_time, self.APPROACH_LOG_INTERVAL):
+                    if self.can_print(
+                        self.last_approach_log_time,
+                        self.APPROACH_LOG_INTERVAL
+                    ):
 
                         self.flight_controller.approach_target(error_x, error_y)
 
@@ -346,7 +378,10 @@ class MissionSystem:
                         status = f"SIRADAKI HEDEF: {expected_target}"
                         direction = "HEDEF YOK - ARAMA MODU"
 
-                    if self.can_print(self.last_lost_log_time, self.LOST_LOG_INTERVAL):
+                    if self.can_print(
+                        self.last_lost_log_time,
+                        self.LOST_LOG_INTERVAL
+                    ):
 
                         self.logger.target_lost()
                         self.flight_controller.search_forward()
@@ -359,7 +394,8 @@ class MissionSystem:
                 current_target=current_target,
                 status=status,
                 direction=direction,
-                fps=fps
+                fps=fps,
+                stable_count=self.stable_count
             )
 
             if self.video_writer is not None:
