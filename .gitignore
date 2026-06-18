@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+
+*.mp4
+mission_log.txt
+
+runs/
+*.avi
+*.mov
+
+.env
+venv/
+.venv/
