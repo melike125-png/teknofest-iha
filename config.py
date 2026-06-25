@@ -15,7 +15,11 @@ MODEL_PATH = "best.pt"
 
 CONF_LIMIT = 0.60
 
-MAX_DETECTION = 5
+CONF_LIMIT = 0.60
+
+MAX_DETECTION = 1
+
+IOU_LIMIT = 0.10
 
 # YOLO'nun üst üste binen kutuları temizlemesi için kullanılır.
 # Düşük olursa aynı hedefe çok fazla kutu çizmesini azaltır.
