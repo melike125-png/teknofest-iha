@@ -22,6 +22,11 @@ from failsafe import FailsafeSystem
 from flight_controller import FlightController
 
 
+WINDOW_NAME = "TEKNOFEST IHA GOREV SISTEMI"
+DISPLAY_WIDTH = 1280
+DISPLAY_HEIGHT = 720
+
+
 class MissionSystem:
 
     def __init__(self):
@@ -164,6 +169,7 @@ class MissionSystem:
 
         status = "GOREV TAMAMLANDI"
         direction = "TUM YUKLER BIRAKILDI"
+        mission_state = "GOREV_TAMAMLANDI"
 
         self.logger.mission_completed()
 
@@ -174,7 +180,8 @@ class MissionSystem:
             status=status,
             direction=direction,
             fps=fps,
-            stable_count=0
+            stable_count=0,
+            mission_state=mission_state
         )
 
         if self.video_writer is not None:
@@ -231,6 +238,9 @@ class MissionSystem:
         print("Gorev basladi.")
         self.logger.write_log("2. GOREV BASLADI")
 
+        cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(WINDOW_NAME, DISPLAY_WIDTH, DISPLAY_HEIGHT)
+
         while True:
 
             expected_target = self.get_expected_target()
@@ -267,10 +277,12 @@ class MissionSystem:
                 status = "GOREV TAMAMLANDI"
                 direction = "TUM YUKLER BIRAKILDI"
                 current_target = None
+                mission_state = "GOREV_TAMAMLANDI"
             else:
                 status = f"SIRADAKI HEDEF: {expected_target}"
-                direction = "ARAMA MODU"
+                direction = "ARAMA"
                 current_target = expected_target
+                mission_state = "HEDEF_ARIYOR"
 
             if self.all_targets_completed():
 
@@ -305,11 +317,13 @@ class MissionSystem:
 
                     status = f"HEDEF ORTADA - {self.stable_count}/{STABLE_LIMIT}"
                     direction = "MERKEZDE"
+                    mission_state = "MERKEZDE"
 
                     if self.stable_count >= STABLE_LIMIT:
 
                         status = "YUK BIRAKMA SEKANSI"
                         direction = "ALCAL - YUK BIRAK - YUKSEL"
+                        mission_state = "BIRAKILDI"
 
                         self.release_payload_sequence(detected_target)
 
@@ -334,6 +348,7 @@ class MissionSystem:
                     self.stable_count = 0
                     status = "HEDEF VAR - ORTALA"
                     direction = target_data["direction"]
+                    mission_state = "HEDEFE_HIZALANIYOR"
 
                     error_x = target_data.get("error_x", 0)
                     error_y = target_data.get("error_y", 0)
@@ -358,7 +373,8 @@ class MissionSystem:
                 if wrong_target is not None:
 
                     status = f"YANLIS HEDEF: {wrong_target}"
-                    direction = f"BEKLENEN: {expected_target} - YOK SAYILDI"
+                    direction = f"BEKLENEN: {expected_target}"
+                    mission_state = "BEKLIYOR"
 
                     if self.can_print(
                         self.last_wrong_target_log_time,
@@ -376,7 +392,8 @@ class MissionSystem:
 
                     if expected_target is not None:
                         status = f"SIRADAKI HEDEF: {expected_target}"
-                        direction = "HEDEF YOK - ARAMA MODU"
+                        direction = "ARAMA"
+                        mission_state = "HEDEF_ARIYOR"
 
                     if self.can_print(
                         self.last_lost_log_time,
@@ -388,20 +405,21 @@ class MissionSystem:
 
                         self.last_lost_log_time = current_time
 
-            self.ui.draw(
+            display_frame = self.ui.draw(
                 frame=frame,
                 target_data=target_data,
                 current_target=current_target,
                 status=status,
                 direction=direction,
                 fps=fps,
-                stable_count=self.stable_count
+                stable_count=self.stable_count,
+                mission_state=mission_state
             )
 
             if self.video_writer is not None:
                 self.video_writer.write(frame)
 
-            cv2.imshow("TEKNOFEST IHA GOREV SISTEMI", frame)
+            cv2.imshow(WINDOW_NAME, display_frame)
 
             key = cv2.waitKey(1) & 0xFF
 
