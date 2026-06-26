@@ -9,7 +9,9 @@ from config import (
     TARGET_BLUE_HEXAGON,
     TARGET_RED_TRIANGLE,
     MISSION_ALTITUDE,
-    DROP_ALTITUDE
+    DROP_ALTITUDE,
+    CENTER_TOLERANCE_X,
+    CENTER_TOLERANCE_Y
 )
 
 from camera import CameraSystem
@@ -107,6 +109,30 @@ class MissionSystem:
 
         return False
 
+    def format_panel_direction(self, target_data):
+
+        if target_data is None:
+            return "HEDEF_YOK"
+
+        directions = []
+        error_x = target_data.get("error_x", 0)
+        error_y = target_data.get("error_y", 0)
+
+        if error_x > CENTER_TOLERANCE_X:
+            directions.append("SAG")
+        elif error_x < -CENTER_TOLERANCE_X:
+            directions.append("SOL")
+
+        if error_y > CENTER_TOLERANCE_Y:
+            directions.append("ASAGI")
+        elif error_y < -CENTER_TOLERANCE_Y:
+            directions.append("YUKARI")
+
+        if not directions:
+            return "MERKEZDE"
+
+        return " ".join(directions)
+
     def start_video_recording(self):
 
         width = self.camera.get_width()
@@ -170,6 +196,7 @@ class MissionSystem:
         status = "GOREV TAMAMLANDI"
         direction = "TUM YUKLER BIRAKILDI"
         mission_state = "GOREV_TAMAMLANDI"
+        payload_status = "BIRAKILDI"
 
         self.logger.mission_completed()
 
@@ -181,7 +208,8 @@ class MissionSystem:
             direction=direction,
             fps=fps,
             stable_count=0,
-            mission_state=mission_state
+            mission_state=mission_state,
+            payload_status=payload_status
         )
 
         if self.video_writer is not None:
@@ -273,16 +301,18 @@ class MissionSystem:
                 expected_target=expected_target
             )
 
+            mission_state = "HEDEF_ARIYOR"
+            direction = "HEDEF_YOK"
+            payload_status = "BEKLIYOR"
+            status = "HEDEF YOK"
+            current_target = expected_target
+
             if expected_target is None:
                 status = "GOREV TAMAMLANDI"
                 direction = "TUM YUKLER BIRAKILDI"
                 current_target = None
                 mission_state = "GOREV_TAMAMLANDI"
-            else:
-                status = f"SIRADAKI HEDEF: {expected_target}"
-                direction = "ARAMA"
-                current_target = expected_target
-                mission_state = "HEDEF_ARIYOR"
+                payload_status = "BIRAKILDI"
 
             if self.all_targets_completed():
 
@@ -318,12 +348,14 @@ class MissionSystem:
                     status = f"HEDEF ORTADA - {self.stable_count}/{STABLE_LIMIT}"
                     direction = "MERKEZDE"
                     mission_state = "MERKEZDE"
+                    payload_status = "BEKLIYOR"
 
                     if self.stable_count >= STABLE_LIMIT:
 
                         status = "YUK BIRAKMA SEKANSI"
-                        direction = "ALCAL - YUK BIRAK - YUKSEL"
-                        mission_state = "BIRAKILDI"
+                        direction = "MERKEZDE"
+                        mission_state = "YUK_BIRAKILIYOR"
+                        payload_status = "BIRAKILDI"
 
                         self.release_payload_sequence(detected_target)
 
@@ -347,8 +379,9 @@ class MissionSystem:
 
                     self.stable_count = 0
                     status = "HEDEF VAR - ORTALA"
-                    direction = target_data["direction"]
+                    direction = self.format_panel_direction(target_data)
                     mission_state = "HEDEFE_HIZALANIYOR"
+                    payload_status = "BEKLIYOR"
 
                     error_x = target_data.get("error_x", 0)
                     error_y = target_data.get("error_y", 0)
@@ -373,8 +406,9 @@ class MissionSystem:
                 if wrong_target is not None:
 
                     status = f"YANLIS HEDEF: {wrong_target}"
-                    direction = f"BEKLENEN: {expected_target}"
-                    mission_state = "BEKLIYOR"
+                    mission_state = "HEDEF_ARIYOR"
+                    direction = "HEDEF_YOK"
+                    payload_status = "BEKLIYOR"
 
                     if self.can_print(
                         self.last_wrong_target_log_time,
@@ -391,9 +425,10 @@ class MissionSystem:
                 else:
 
                     if expected_target is not None:
-                        status = f"SIRADAKI HEDEF: {expected_target}"
-                        direction = "ARAMA"
+                        status = "HEDEF YOK"
+                        direction = "HEDEF_YOK"
                         mission_state = "HEDEF_ARIYOR"
+                        payload_status = "BEKLIYOR"
 
                     if self.can_print(
                         self.last_lost_log_time,
@@ -413,7 +448,8 @@ class MissionSystem:
                 direction=direction,
                 fps=fps,
                 stable_count=self.stable_count,
-                mission_state=mission_state
+                mission_state=mission_state,
+                payload_status=payload_status
             )
 
             if self.video_writer is not None:

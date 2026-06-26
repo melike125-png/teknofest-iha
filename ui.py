@@ -257,7 +257,8 @@ class UISystem:
         direction,
         fps,
         stable_count=0,
-        mission_state="HEDEF_ARIYOR"
+        mission_state="HEDEF_ARIYOR",
+        payload_status=None
     ):
 
         src_height, src_width, _ = frame.shape
@@ -302,10 +303,11 @@ class UISystem:
 
         payload_name, servo_name = self.get_payload_info(current_target)
 
-        if current_target is None:
-            payload_status = "TUM YUKLER BIRAKILDI"
-        else:
-            payload_status = f"{payload_name} | {servo_name}"
+        if payload_status is None:
+            if current_target is None:
+                payload_status = "TUM YUKLER BIRAKILDI"
+            else:
+                payload_status = f"{payload_name} | {servo_name}"
 
         confidence_text = "-"
         selected_target = "YOK"
