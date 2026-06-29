@@ -1,294 +1,322 @@
 import time
 import cv2
-
-from config import CAMERA_INDEX
-from detector import DetectorSystem
-from video_ui import draw_video_ui
+from ultralytics import YOLO
 
 
-WINDOW_NAME = "TEKNOFEST IHA GOREV SISTEMI"
+MODEL_PATH = "best.pt"
+CAMERA_INDEX = 0
 
-DISPLAY_WIDTH = 1280
-DISPLAY_HEIGHT = 720
+FRAME_WIDTH = 640
+FRAME_HEIGHT = 480
 
-# Gorev sirasi kesin:
-# 1) mavi_altigen
-# 2) kirmizi_ucgen
-MISSION_SEQUENCE = ["mavi_altigen", "kirmizi_ucgen"]
+YOLO_IMGSZ = 320
+CONF_LIMIT = 0.50
+IOU_LIMIT = 0.30
 
-# Hedefin tamamlandi sayilmasi icin kac kare ust uste dogru algilanmasi gerekir.
-# 18 kare, 20-30 FPS kamerada yaklasik 0.6 - 0.9 saniye demektir.
-STABLE_REQUIRED = 18
+PROCESS_EVERY_N_FRAMES = 2
+TARGET_CONFIRM_SECONDS = 1.0
 
-# Yuku birakiyor durumunun ekranda kac saniye gorunecegi.
-DROP_SECONDS = 2.0
+WINDOW_NAME = "TEKNOFEST IHA HEDEF ALGILAMA"
 
-# Bir hedef tamamlandiktan sonra siradaki hedefe gecis bekleme suresi.
-TRANSITION_SECONDS = 2.0
-
-
-def calculate_fps(prev_time):
-    current_time = time.time()
-
-    if prev_time == 0:
-        fps = 0
-    else:
-        fps = 1 / (current_time - prev_time)
-
-    return fps, current_time
+TARGET_SEQUENCE = [
+    "mavi_altigen",
+    "kirmizi_ucgen",
+]
 
 
-def choose_best_detection(detections):
-    if not detections:
-        return None
+def draw_detection_panel(
+    frame,
+    next_target,
+    detected_target,
+    detection_status,
+    confidence,
+    mission_step,
+    total_steps,
+    fps
+):
+    panel_x1 = 10
+    panel_y1 = 10
+    panel_x2 = 510
+    panel_y2 = 205
 
-    return max(
-        detections,
-        key=lambda detection: detection.get("confidence", 0)
+    overlay = frame.copy()
+
+    cv2.rectangle(
+        overlay,
+        (panel_x1, panel_y1),
+        (panel_x2, panel_y2),
+        (20, 20, 20),
+        -1
     )
 
+    cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
 
-def choose_detection_for_expected_target(detections, expected_target):
-    if not detections or expected_target is None:
-        return None
+    cv2.rectangle(
+        frame,
+        (panel_x1, panel_y1),
+        (panel_x2, panel_y2),
+        (170, 170, 170),
+        1
+    )
 
-    expected_detections = [
-        detection for detection in detections
-        if detection.get("class_name") == expected_target
+    title_color = (0, 180, 255)
+    label_color = (210, 210, 210)
+    good_color = (0, 255, 0)
+    warn_color = (0, 255, 255)
+    bad_color = (0, 0, 255)
+    white_color = (235, 235, 235)
+
+    cv2.putText(
+        frame,
+        "TEKNOFEST IHA HEDEF ALGILAMA",
+        (25, 40),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.58,
+        title_color,
+        2,
+        cv2.LINE_AA
+    )
+
+    if detection_status == "DOGRU HEDEF ALGILANDI":
+        status_color = good_color
+    elif detection_status == "YANLIS HEDEF ALGILANDI":
+        status_color = bad_color
+    elif detection_status == "GOREV TAMAMLANDI":
+        status_color = good_color
+    else:
+        status_color = warn_color
+
+    rows = [
+        ("SIRADAKI HEDEF", next_target, warn_color if next_target != "-" else good_color),
+        ("ALGILANAN HEDEF", detected_target, good_color if detected_target != "-" else warn_color),
+        ("ALGILAMA DURUMU", detection_status, status_color),
+        ("GUVEN ORANI", confidence, white_color),
+        ("GOREV ADIMI", f"{mission_step}/{total_steps}", white_color),
+        ("FPS", fps, white_color),
     ]
 
-    if not expected_detections:
-        return None
+    y = 68
 
-    return max(
-        expected_detections,
-        key=lambda detection: detection.get("confidence", 0)
+    for label, value, color in rows:
+        cv2.putText(
+            frame,
+            f"{label:16s}:",
+            (25, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.43,
+            label_color,
+            1,
+            cv2.LINE_AA
+        )
+
+        cv2.putText(
+            frame,
+            str(value),
+            (235, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.43,
+            color,
+            2,
+            cv2.LINE_AA
+        )
+
+        y += 24
+
+
+def draw_detection_box(frame, detection, is_correct_target):
+    if detection is None:
+        return
+
+    x1, y1, x2, y2 = detection["box"]
+    class_name = detection["class_name"]
+    confidence = detection["confidence"]
+
+    if is_correct_target:
+        box_color = (0, 255, 0)
+    else:
+        box_color = (0, 0, 255)
+
+    cv2.rectangle(
+        frame,
+        (x1, y1),
+        (x2, y2),
+        box_color,
+        2
+    )
+
+    label = f"{class_name} {confidence:.2f}"
+
+    cv2.putText(
+        frame,
+        label,
+        (x1, max(25, y1 - 8)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        box_color,
+        2,
+        cv2.LINE_AA
     )
 
 
-def get_expected_target(completed_targets):
-    for target in MISSION_SEQUENCE:
-        if not completed_targets[target]:
-            return target
+def get_best_detection(results, model):
+    best_detection = None
+    best_confidence = 0.0
 
-    return None
+    for result in results:
+        if result.boxes is None:
+            continue
 
+        for box in result.boxes:
+            confidence = float(box.conf[0])
 
-def reset_completed_targets():
-    return {
-        "mavi_altigen": False,
-        "kirmizi_ucgen": False
-    }
+            if confidence < best_confidence:
+                continue
 
+            cls_id = int(box.cls[0])
+            class_name = model.names[cls_id]
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
 
-def is_completed_target(class_name, completed_targets):
-    return completed_targets.get(class_name, False)
+            best_confidence = confidence
+
+            best_detection = {
+                "class_name": class_name,
+                "confidence": confidence,
+                "box": (x1, y1, x2, y2)
+            }
+
+    return best_detection
 
 
 def main():
-    print("=" * 50)
-    print("TEKNOFEST IHA GOREV SISTEMI")
-    print("Kamera hedef algilama baslatiliyor...")
+    print("TEKNOFEST IHA hedef algilama demosu baslatiliyor...")
+    print("Hedef sirasi: mavi_altigen -> kirmizi_ucgen")
     print("Cikis icin q tusuna basin.")
-    print("Hedef sirasi sifirlamak icin r tusuna basin.")
-    print("=" * 50)
 
-    print("YOLO modeli yukleniyor...")
-    detector = DetectorSystem()
-    print("YOLO modeli hazir.")
+    model = YOLO(MODEL_PATH)
 
-    camera = cv2.VideoCapture(CAMERA_INDEX)
-    camera.set(cv2.CAP_PROP_FRAME_WIDTH, DISPLAY_WIDTH)
-    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, DISPLAY_HEIGHT)
+    cap = cv2.VideoCapture(CAMERA_INDEX)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+    cap.set(cv2.CAP_PROP_FPS, 15)
 
-    if not camera.isOpened():
+    if not cap.isOpened():
         print("Kamera acilamadi.")
         return
 
-    completed_targets = reset_completed_targets()
-
-    stable_count = 0
-    prev_time = 0
-
-    drop_target = None
-    drop_until = 0
-
-    transition_until = 0
-    transition_message = ""
-
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(WINDOW_NAME, DISPLAY_WIDTH, DISPLAY_HEIGHT)
+    cv2.resizeWindow(WINDOW_NAME, FRAME_WIDTH, FRAME_HEIGHT)
+
+    target_index = 0
+    total_steps = len(TARGET_SEQUENCE)
+
+    frame_count = 0
+    last_detection = None
+    last_time = time.time()
+    fps = 0.0
+
+    correct_target_start_time = None
+    mission_done = False
 
     while True:
-        success, frame = camera.read()
+        ret, frame = cap.read()
 
-        if not success:
-            print("Goruntu alinamadi.")
+        if not ret:
+            print("Kameradan goruntu alinamadi.")
             break
 
-        frame = cv2.resize(frame, (DISPLAY_WIDTH, DISPLAY_HEIGHT))
+        frame_count += 1
 
-        fps, prev_time = calculate_fps(prev_time)
+        now = time.time()
+        elapsed = now - last_time
 
-        detections = detector.detect(frame)
+        if elapsed > 0:
+            fps = 1.0 / elapsed
 
-        current_time = time.time()
+        last_time = now
 
-        expected_target = get_expected_target(completed_targets)
-
-        # -------------------------------------------------
-        # Yuk birakma durumu
-        # -------------------------------------------------
-        if drop_target is not None:
-            mission_status = "YUK BIRAKILIYOR"
-
-            if current_time >= drop_until:
-                completed_targets[drop_target] = True
-
-                print("=" * 50)
-                print(f"{drop_target} TAMAMLANDI")
-                print("=" * 50)
-
-                finished_target = drop_target
-                drop_target = None
-                stable_count = 0
-
-                expected_target = get_expected_target(completed_targets)
-
-                if expected_target is None:
-                    mission_status = "GOREV TAMAMLANDI"
-                    transition_until = 0
-                    transition_message = ""
-                else:
-                    transition_message = (
-                        f"{finished_target} TAMAMLANDI"
-                    )
-                    transition_until = current_time + TRANSITION_SECONDS
-                    mission_status = transition_message
-
-            display_frame = draw_video_ui(
-                frame=frame,
-                detections=detections,
-                fps=fps,
-                expected_target=drop_target if drop_target is not None else expected_target,
-                mission_status=mission_status,
-                completed_targets=completed_targets,
-                stable_count=stable_count,
-                stable_required=STABLE_REQUIRED
+        if frame_count % PROCESS_EVERY_N_FRAMES == 0 and not mission_done:
+            results = model(
+                frame,
+                imgsz=YOLO_IMGSZ,
+                conf=CONF_LIMIT,
+                iou=IOU_LIMIT,
+                max_det=1,
+                verbose=False
             )
 
-            cv2.imshow(WINDOW_NAME, display_frame)
+            last_detection = get_best_detection(results, model)
 
-        # -------------------------------------------------
-        # Tum gorev tamamlandiysa
-        # -------------------------------------------------
-        elif expected_target is None:
-            mission_status = "GOREV TAMAMLANDI"
-            stable_count = 0
+        if mission_done:
+            next_target = "-"
+            detected_target = "-"
+            confidence_text = "-"
+            detection_status = "GOREV TAMAMLANDI"
+            is_correct_target = False
 
-            display_frame = draw_video_ui(
-                frame=frame,
-                detections=[],
-                fps=fps,
-                expected_target=None,
-                mission_status=mission_status,
-                completed_targets=completed_targets,
-                stable_count=stable_count,
-                stable_required=STABLE_REQUIRED
-            )
-
-            cv2.imshow(WINDOW_NAME, display_frame)
-
-        # -------------------------------------------------
-        # Hedefler arasi gecis bekleme durumu
-        # -------------------------------------------------
-        elif current_time < transition_until:
-            mission_status = transition_message
-
-            display_frame = draw_video_ui(
-                frame=frame,
-                detections=[],
-                fps=fps,
-                expected_target=expected_target,
-                mission_status=mission_status,
-                completed_targets=completed_targets,
-                stable_count=0,
-                stable_required=STABLE_REQUIRED
-            )
-
-            cv2.imshow(WINDOW_NAME, display_frame)
-
-        # -------------------------------------------------
-        # Normal otonom hedef arama ve dogrulama
-        # -------------------------------------------------
         else:
-            expected_detection = choose_detection_for_expected_target(
-                detections=detections,
-                expected_target=expected_target
-            )
+            next_target = TARGET_SEQUENCE[target_index]
 
-            best_detection = choose_best_detection(detections)
-
-            if expected_detection is not None:
-                stable_count += 1
-                mission_status = f"HEDEF ALGILANDI {stable_count}/{STABLE_REQUIRED}"
-
-                if stable_count >= STABLE_REQUIRED:
-                    drop_target = expected_target
-                    drop_until = current_time + DROP_SECONDS
-                    stable_count = 0
-                    mission_status = "YUK BIRAKILIYOR"
-
-            elif best_detection is None:
-                stable_count = 0
-                mission_status = "HEDEF ARANIYOR"
+            if last_detection is None:
+                detected_target = "-"
+                confidence_text = "-"
+                detection_status = "HEDEF YOK"
+                is_correct_target = False
+                correct_target_start_time = None
 
             else:
-                detected_class = best_detection.get("class_name", "unknown")
+                detected_target = last_detection["class_name"]
+                confidence_text = f"{last_detection['confidence']:.2f}"
+                is_correct_target = detected_target == next_target
 
-                if is_completed_target(detected_class, completed_targets):
-                    stable_count = 0
-                    mission_status = "TAMAMLANMIS HEDEF YOK SAYILDI"
+                if is_correct_target:
+                    detection_status = "DOGRU HEDEF ALGILANDI"
+
+                    if correct_target_start_time is None:
+                        correct_target_start_time = time.time()
+
+                    correct_duration = time.time() - correct_target_start_time
+
+                    if correct_duration >= TARGET_CONFIRM_SECONDS:
+                        target_index += 1
+                        correct_target_start_time = None
+                        last_detection = None
+
+                        if target_index >= total_steps:
+                            mission_done = True
+                            detection_status = "GOREV TAMAMLANDI"
+                            next_target = "-"
+                        else:
+                            next_target = TARGET_SEQUENCE[target_index]
+
                 else:
-                    stable_count = 0
-                    mission_status = f"YANLIS HEDEF: {detected_class}"
+                    detection_status = "YANLIS HEDEF ALGILANDI"
+                    correct_target_start_time = None
 
-            display_frame = draw_video_ui(
-                frame=frame,
-                detections=detections,
-                fps=fps,
-                expected_target=expected_target,
-                mission_status=mission_status,
-                completed_targets=completed_targets,
-                stable_count=stable_count,
-                stable_required=STABLE_REQUIRED
-            )
+        draw_detection_box(frame, last_detection, not mission_done and last_detection is not None and last_detection["class_name"] == next_target)
 
-            cv2.imshow(WINDOW_NAME, display_frame)
+        mission_step = min(target_index + 1, total_steps)
+
+        draw_detection_panel(
+            frame,
+            next_target,
+            detected_target,
+            detection_status,
+            confidence_text,
+            mission_step,
+            total_steps,
+            f"{fps:.1f}"
+        )
+
+        cv2.imshow(WINDOW_NAME, frame)
 
         key = cv2.waitKey(1) & 0xFF
 
         if key == ord("q"):
-            print("Sistem kullanici tarafindan durduruldu.")
             break
 
-        if key == ord("r"):
-            completed_targets = reset_completed_targets()
-            stable_count = 0
-            drop_target = None
-            drop_until = 0
-            transition_until = 0
-            transition_message = ""
-
-            print("=" * 50)
-            print("Hedef sirasi sifirlandi.")
-            print("Ilk hedef: mavi_altigen")
-            print("=" * 50)
-
-    camera.release()
+    cap.release()
     cv2.destroyAllWindows()
-
-    print("Hedef algilama sistemi kapatildi.")
+    print("Program kapatildi.")
 
 
 if __name__ == "__main__":
