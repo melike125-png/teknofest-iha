@@ -1,26 +1,28 @@
 import time
 import cv2
-from flask import Flask, Response
+from flask import Flask, Response, jsonify
 from ultralytics import YOLO
 
 
 MODEL_PATH = "best.pt"
 CAMERA_INDEX = 0
 
-FRAME_WIDTH = 640
-FRAME_HEIGHT = 480
+CAMERA_WIDTH = 640
+CAMERA_HEIGHT = 480
 
 YOLO_IMGSZ = 320
 CONF_LIMIT = 0.50
 IOU_LIMIT = 0.30
 
 PROCESS_EVERY_N_FRAMES = 3
-TARGET_CONFIRM_SECONDS = 1.0
+TARGET_CONFIRM_SECONDS = 3.0
 
 TARGET_SEQUENCE = [
     "mavi_altigen",
     "kirmizi_ucgen",
 ]
+
+WEB_PORT = 5003
 
 app = Flask(__name__)
 
@@ -35,96 +37,14 @@ frame_count = 0
 last_time = time.time()
 fps = 0.0
 
-
-def draw_panel(frame, next_target, detected_target, status, confidence, step_text, fps_text):
-    panel_x1, panel_y1 = 14, 14
-    panel_x2, panel_y2 = 505, 190
-
-    overlay = frame.copy()
-
-    cv2.rectangle(
-        overlay,
-        (panel_x1, panel_y1),
-        (panel_x2, panel_y2),
-        (12, 14, 18),
-        -1
-    )
-
-    cv2.addWeighted(overlay, 0.82, frame, 0.18, 0, frame)
-
-    cv2.rectangle(
-        frame,
-        (panel_x1, panel_y1),
-        (panel_x2, panel_y2),
-        (95, 105, 115),
-        1
-    )
-
-    title_color = (245, 245, 245)
-    label_color = (170, 175, 180)
-    text_color = (235, 235, 235)
-    blue_color = (255, 170, 60)
-    green_color = (70, 220, 120)
-    red_color = (70, 70, 230)
-    muted_color = (150, 150, 150)
-
-    cv2.putText(
-        frame,
-        "TEKNOFEST IHA HEDEF ALGILAMA",
-        (30, 42),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.55,
-        title_color,
-        2,
-        cv2.LINE_AA,
-    )
-
-    if status == "DOGRU HEDEF ALGILANDI":
-        status_color = green_color
-    elif status == "YANLIS HEDEF ALGILANDI":
-        status_color = red_color
-    elif status == "GOREV TAMAMLANDI":
-        status_color = green_color
-    elif status == "HEDEF YOK":
-        status_color = muted_color
-    else:
-        status_color = text_color
-
-    rows = [
-        ("SIRADAKI HEDEF", next_target, blue_color if next_target != "-" else muted_color),
-        ("ALGILANAN HEDEF", detected_target, green_color if detected_target != "-" else muted_color),
-        ("ALGILAMA DURUMU", status, status_color),
-        ("GUVEN ORANI", confidence, text_color if confidence != "-" else muted_color),
-        ("GOREV ADIMI", step_text, text_color),
-        ("FPS", fps_text, text_color),
-    ]
-
-    y = 68
-
-    for label, value, color in rows:
-        cv2.putText(
-            frame,
-            f"{label:16s}:",
-            (30, y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.42,
-            label_color,
-            1,
-            cv2.LINE_AA,
-        )
-
-        cv2.putText(
-            frame,
-            str(value),
-            (232, y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.42,
-            color,
-            2,
-            cv2.LINE_AA,
-        )
-
-        y += 22
+current_status = {
+    "next_target": "mavi_altigen",
+    "detected_target": "-",
+    "status": "HEDEF YOK",
+    "confidence": "-",
+    "step": "1/2",
+    "fps": "0.0",
+}
 
 
 def draw_box(frame, detection, is_correct):
@@ -135,27 +55,28 @@ def draw_box(frame, detection, is_correct):
     class_name = detection["class_name"]
     confidence = detection["confidence"]
 
-    if is_correct:
-        color = (70, 220, 120)
-    else:
-        color = (70, 70, 230)
+    color = (90, 220, 125) if is_correct else (80, 80, 230)
 
-    cv2.rectangle(
-        frame,
-        (x1, y1),
-        (x2, y2),
-        color,
-        2
-    )
+    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+
+    label = f"{class_name} {confidence:.2f}"
+
+    label_x1 = x1
+    label_y1 = max(0, y1 - 24)
+    label_x2 = min(frame.shape[1] - 1, x1 + 160)
+    label_y2 = label_y1 + 24
+
+    cv2.rectangle(frame, (label_x1, label_y1), (label_x2, label_y2), (8, 12, 20), -1)
+    cv2.rectangle(frame, (label_x1, label_y1), (label_x2, label_y2), color, 1)
 
     cv2.putText(
         frame,
-        f"{class_name} {confidence:.2f}",
-        (x1, max(25, y1 - 8)),
+        label,
+        (label_x1 + 6, label_y1 + 17),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.55,
+        0.45,
         color,
-        2,
+        1,
         cv2.LINE_AA,
     )
 
@@ -187,6 +108,15 @@ def get_best_detection(results):
             }
 
     return best_detection
+
+
+def update_status(next_target, detected_target, status, confidence_text, step_text, fps_text):
+    current_status["next_target"] = next_target
+    current_status["detected_target"] = detected_target
+    current_status["status"] = status
+    current_status["confidence"] = confidence_text
+    current_status["step"] = step_text
+    current_status["fps"] = fps_text
 
 
 def generate_frames():
@@ -276,8 +206,7 @@ def generate_frames():
 
         draw_box(frame, last_detection, is_correct)
 
-        draw_panel(
-            frame,
+        update_status(
             next_target,
             detected_target,
             status,
@@ -286,7 +215,11 @@ def generate_frames():
             f"{fps:.1f}",
         )
 
-        success, buffer = cv2.imencode(".jpg", frame)
+        success, buffer = cv2.imencode(
+            ".jpg",
+            frame,
+            [cv2.IMWRITE_JPEG_QUALITY, 85]
+        )
 
         if not success:
             continue
@@ -307,33 +240,201 @@ def index():
     <head>
         <title>TEKNOFEST IHA HEDEF ALGILAMA</title>
         <style>
-            body {
-                margin: 0;
-                background: #0f1115;
-                color: white;
-                font-family: Arial, sans-serif;
-                text-align: center;
+            * {
+                box-sizing: border-box;
             }
 
-            h2 {
-                margin: 12px 0;
-                font-size: 24px;
-                font-weight: 600;
-                letter-spacing: 0.5px;
+            body {
+                margin: 0;
+                background: #0b0f14;
+                color: #f5f5f5;
+                font-family: Arial, sans-serif;
+            }
+
+            .page {
+                min-height: 100vh;
+                padding: 22px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .title {
+                font-size: 30px;
+                font-weight: 700;
+                letter-spacing: 1px;
+                margin-bottom: 6px;
+            }
+
+            .subtitle {
+                font-size: 14px;
+                color: #8b95a1;
+                margin-bottom: 18px;
+            }
+
+            .content {
+                display: flex;
+                gap: 22px;
+                align-items: flex-start;
+                justify-content: center;
+                width: 100%;
+            }
+
+            .video-card {
+                background: #111720;
+                border: 1px solid #2f3640;
+                box-shadow: 0 0 25px rgba(0, 0, 0, 0.35);
+                padding: 8px;
+            }
+
+            .video-card img {
+                display: block;
+                width: 760px;
+                max-width: 65vw;
+                background: black;
+            }
+
+            .status-card {
+                width: 360px;
+                min-height: 360px;
+                background: #111720;
+                border: 1px solid #2f3640;
+                box-shadow: 0 0 25px rgba(0, 0, 0, 0.35);
+                padding: 24px;
+            }
+
+            .status-title {
+                font-size: 22px;
+                font-weight: 700;
+                margin-bottom: 22px;
                 color: #f2f2f2;
             }
 
-            img {
-                width: 960px;
-                max-width: 96vw;
-                border: 1px solid #333;
-                background: black;
+            .row {
+                margin-bottom: 18px;
+            }
+
+            .label {
+                font-size: 12px;
+                color: #8b95a1;
+                letter-spacing: 0.7px;
+                margin-bottom: 5px;
+            }
+
+            .value {
+                font-size: 22px;
+                font-weight: 700;
+                color: #f2f2f2;
+                word-break: break-word;
+            }
+
+            .blue {
+                color: #55b7ff;
+            }
+
+            .green {
+                color: #5ee085;
+            }
+
+            .red {
+                color: #ff5f6d;
+            }
+
+            .muted {
+                color: #a0a6ad;
+            }
+
+            .small {
+                font-size: 18px;
             }
         </style>
     </head>
     <body>
-        <h2>TEKNOFEST IHA HEDEF ALGILAMA</h2>
-        <img src="/video_feed">
+        <div class="page">
+            <div class="title">TEKNOFEST IHA HEDEF ALGILAMA</div>
+            <div class="subtitle">Sira: mavi_altigen -> kirmizi_ucgen</div>
+
+            <div class="content">
+                <div class="video-card">
+                    <img src="/video_feed">
+                </div>
+
+                <div class="status-card">
+                    <div class="status-title">GOREV DURUM PANELI</div>
+
+                    <div class="row">
+                        <div class="label">SIRADAKI HEDEF</div>
+                        <div id="next_target" class="value blue">-</div>
+                    </div>
+
+                    <div class="row">
+                        <div class="label">ALGILANAN HEDEF</div>
+                        <div id="detected_target" class="value muted">-</div>
+                    </div>
+
+                    <div class="row">
+                        <div class="label">ALGILAMA DURUMU</div>
+                        <div id="status" class="value muted">HEDEF YOK</div>
+                    </div>
+
+                    <div class="row">
+                        <div class="label">GUVEN ORANI</div>
+                        <div id="confidence" class="value small">-</div>
+                    </div>
+
+                    <div class="row">
+                        <div class="label">GOREV ADIMI</div>
+                        <div id="step" class="value small">1/2</div>
+                    </div>
+
+                    <div class="row">
+                        <div class="label">FPS</div>
+                        <div id="fps" class="value small">0.0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            async function updateStatus() {
+                try {
+                    const response = await fetch('/status');
+                    const data = await response.json();
+
+                    document.getElementById('next_target').textContent = data.next_target;
+                    document.getElementById('detected_target').textContent = data.detected_target;
+                    document.getElementById('status').textContent = data.status;
+                    document.getElementById('confidence').textContent = data.confidence;
+                    document.getElementById('step').textContent = data.step;
+                    document.getElementById('fps').textContent = data.fps;
+
+                    const detected = document.getElementById('detected_target');
+                    const status = document.getElementById('status');
+
+                    detected.className = 'value';
+                    status.className = 'value';
+
+                    if (data.detected_target === '-') {
+                        detected.classList.add('muted');
+                    } else {
+                        detected.classList.add('green');
+                    }
+
+                    if (data.status === 'DOGRU HEDEF ALGILANDI' || data.status === 'GOREV TAMAMLANDI') {
+                        status.classList.add('green');
+                    } else if (data.status === 'YANLIS HEDEF ALGILANDI') {
+                        status.classList.add('red');
+                    } else {
+                        status.classList.add('muted');
+                    }
+                } catch (error) {
+                    console.log(error);
+                }
+            }
+
+            setInterval(updateStatus, 300);
+            updateStatus();
+        </script>
     </body>
     </html>
     """
@@ -347,6 +448,11 @@ def video_feed():
     )
 
 
+@app.route("/status")
+def status():
+    return jsonify(current_status)
+
+
 def main():
     global model
     global cap
@@ -354,24 +460,22 @@ def main():
     print("TEKNOFEST IHA web hedef algilama baslatiliyor...")
     print("Hedef sirasi: mavi_altigen -> kirmizi_ucgen")
     print("Yuk / servo / payload bu demo icinde yoktur.")
-    print("Tarayicidan ac:")
-    print("http://teknopi.local:5000")
-    print("veya")
-    print("http://PI_IP:5000")
+    print(f"Tarayicidan ac: http://teknopi.local:{WEB_PORT}")
+    print(f"veya: http://PI_IP:{WEB_PORT}")
     print("Cikis icin terminalde Ctrl+C")
 
     model = YOLO(MODEL_PATH)
 
     cap = cv2.VideoCapture(CAMERA_INDEX)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
     cap.set(cv2.CAP_PROP_FPS, 15)
 
     if not cap.isOpened():
         print("Kamera acilamadi.")
         return
 
-    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
+    app.run(host="0.0.0.0", port=WEB_PORT, debug=False, threaded=True)
 
     cap.release()
 
