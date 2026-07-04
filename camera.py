@@ -1,18 +1,16 @@
-# camera.py
-
+import time
 import cv2
 
 from config import (
-    CAMERA_INDEX,
     FRAME_WIDTH,
-    FRAME_HEIGHT
+    FRAME_HEIGHT,
+    CAMERA_INDEX
 )
 
 
 try:
     from picamera2 import Picamera2
     PICAMERA_AVAILABLE = True
-
 except Exception:
     PICAMERA_AVAILABLE = False
 
@@ -30,16 +28,17 @@ class CameraSystem:
             try:
                 self.picam2 = Picamera2()
 
-                self.picam2.configure(
-                    self.picam2.create_preview_configuration(
-                        main={
-                            "size": (FRAME_WIDTH, FRAME_HEIGHT),
-                            "format": "RGB888"
-                        }
-                    )
+                camera_config = self.picam2.create_video_configuration(
+                    main={
+                        "size": (FRAME_WIDTH, FRAME_HEIGHT),
+                        "format": "RGB888"
+                    }
                 )
 
+                self.picam2.configure(camera_config)
                 self.picam2.start()
+
+                time.sleep(1)
 
                 self.use_picamera = True
 
@@ -48,10 +47,11 @@ class CameraSystem:
             except Exception as e:
 
                 print("Picamera acilamadi.")
-                print(e)
-                print("OpenCV webcam moduna geciliyor.")
+                print("Hata:", e)
+                print("USB kamera deneniyor...")
 
                 self.use_picamera = False
+                self.picam2 = None
 
         if not self.use_picamera:
 
@@ -60,7 +60,10 @@ class CameraSystem:
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
 
-            print("OpenCV webcam modu aktif.")
+            if self.cap.isOpened():
+                print("USB kamera aktif.")
+            else:
+                print("Kamera acilamadi.")
 
     def is_opened(self):
 
@@ -81,6 +84,12 @@ class CameraSystem:
             if frame is None:
                 return None
 
+            if len(frame.shape) == 3 and frame.shape[2] == 4:
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
+
+            elif len(frame.shape) == 3 and frame.shape[2] == 3:
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
             return frame
 
         ret, frame = self.cap.read()
@@ -100,12 +109,18 @@ class CameraSystem:
 
     def release(self):
 
-        if self.use_picamera:
+        if self.use_picamera and self.picam2 is not None:
 
-            if self.picam2 is not None:
+            try:
                 self.picam2.stop()
+            except Exception:
+                pass
 
-        else:
+            self.picam2 = None
 
-            if self.cap is not None:
-                self.cap.release()
+        if self.cap is not None:
+
+            self.cap.release()
+            self.cap = None
+
+        print("Kamera kapatildi.")

@@ -1,6 +1,6 @@
-# mission.py
-
 import time
+import json
+import os
 import cv2
 
 from config import (
@@ -18,18 +18,124 @@ from camera import CameraSystem
 from detector import DetectorSystem
 from payload import PayloadSystem
 from targeting import TargetingSystem
-from ui import UISystem
+from ui import draw_professional_camera_screen
 from logger import LoggerSystem
 from failsafe import FailsafeSystem
 from flight_controller import FlightController
 
 
-WINDOW_NAME = "TEKNOFEST IHA GOREV SISTEMI"
+WINDOW_NAME = "TEKNOFEST IHA 2. GOREV SISTEMI"
 DISPLAY_WIDTH = 1280
 DISPLAY_HEIGHT = 720
 
+MISSION2_COORDINATE_FILE = "mission2_coordinates.json"
 
-class MissionSystem:
+MISSION_SAFE_MODE = True
+ALLOW_PAYLOAD_DROP = False
+
+class Mission2UI:
+
+    def draw(
+        self,
+        frame,
+        target_data=None,
+        current_target=None,
+        status="",
+        direction="",
+        fps=0,
+        stable_count=0,
+        mission_state="",
+        payload_status=""
+    ):
+        display_frame = frame.copy()
+
+        h, w = display_frame.shape[:2]
+
+        if target_data is not None:
+            box = target_data.get("box")
+
+            if box is not None:
+                x1, y1, x2, y2 = box
+                cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 3)
+
+                label = target_data.get("class_name", "target")
+                confidence = target_data.get("confidence", 0)
+
+                cv2.putText(
+                    display_frame,
+                    f"{label} {confidence:.2f}",
+                    (x1, max(30, y1 - 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 255, 0),
+                    2
+                )
+
+                center = target_data.get("target_center")
+
+                if center is not None:
+                    cx, cy = center
+                    cv2.circle(display_frame, (cx, cy), 6, (0, 255, 0), -1)
+                    cv2.line(display_frame, (w // 2, h // 2), (cx, cy), (0, 255, 0), 2)
+
+        cv2.circle(display_frame, (w // 2, h // 2), 7, (0, 255, 255), -1)
+        cv2.line(display_frame, (w // 2 - 25, h // 2), (w // 2 + 25, h // 2), (0, 255, 255), 2)
+        cv2.line(display_frame, (w // 2, h // 2 - 25), (w // 2, h // 2 + 25), (0, 255, 255), 2)
+
+        panel_h = 190
+        overlay = display_frame.copy()
+        cv2.rectangle(overlay, (0, 0), (w, panel_h), (0, 0, 0), -1)
+        display_frame = cv2.addWeighted(overlay, 0.65, display_frame, 0.35, 0)
+
+        if current_target is None:
+            current_target_text = "YOK"
+        else:
+            current_target_text = current_target
+
+        lines = [
+            f"2. GOREV | FPS: {fps:.1f}",
+            f"SIRADAKI HEDEF: {current_target_text}",
+            f"DURUM: {status}",
+            f"YON: {direction}",
+            f"YUK: {payload_status}",
+            f"STABLE: {stable_count}"
+        ]
+
+        y = 32
+
+        for index, line in enumerate(lines):
+            if index == 0:
+                color = (0, 255, 255)
+                scale = 0.75
+                thickness = 2
+            elif "SIRADAKI" in line:
+                color = (255, 255, 255)
+                scale = 0.65
+                thickness = 2
+            elif "DURUM" in line:
+                color = (0, 255, 255)
+                scale = 0.65
+                thickness = 2
+            else:
+                color = (220, 220, 220)
+                scale = 0.62
+                thickness = 2
+
+            cv2.putText(
+                display_frame,
+                line,
+                (25, y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                scale,
+                color,
+                thickness
+            )
+
+            y += 30
+
+        return display_frame
+        
+class Mission2Payload:
 
     def __init__(self):
 
@@ -40,42 +146,147 @@ class MissionSystem:
 
         self.camera = CameraSystem()
         self.detector = DetectorSystem()
-        self.payload = PayloadSystem()
-        self.targeting = TargetingSystem()
-        self.ui = UISystem()
-        self.flight_controller = FlightController()
 
-        # Görevde tamamlanan hedefler burada tutulur.
-        # İlk başta ikisi de tamamlanmamış olur.
+        if ALLOW_PAYLOAD_DROP:
+            self.payload = PayloadSystem()
+        else:
+            self.payload = None
+            print("GUVENLI MOD -> Payload sistemi fiziksel olarak baslatilmadi.")
+
+        self.targeting = TargetingSystem()
+        self.ui = Mission2UI()
+        self.flight_controller = FlightController(use_real_cube=True)
+
         self.completed_targets = {
             TARGET_BLUE_HEXAGON: False,
             TARGET_RED_TRIANGLE: False
         }
 
+        self.start_point = None
+        self.finish_point = None
+
         self.stable_count = 0
         self.prev_time = 0
         self.video_writer = None
 
-        # 1. görev olan 8 çizme görevi bir kere yapılsın diye kullanılır.
-        self.infinity8_done = False
-
-        # Terminalin çok dolmasını engellemek için zamanlayıcılar.
         self.last_target_log_time = 0
         self.last_lost_log_time = 0
         self.last_wrong_target_log_time = 0
         self.last_approach_log_time = 0
 
-        # Aynı mesajları her karede yazmamak için aralıklar.
         self.TARGET_LOG_INTERVAL = 0.7
         self.LOST_LOG_INTERVAL = 1.0
         self.WRONG_TARGET_LOG_INTERVAL = 1.0
         self.APPROACH_LOG_INTERVAL = 0.5
 
+        self.finish_point_reached = False
+
+    def read_float(self, text):
+
+        while True:
+            value = input(text).strip()
+            value = value.replace(",", ".")
+
+            try:
+                return float(value)
+            except ValueError:
+                print("Gecersiz deger. Tekrar gir.")
+
+    def collect_coordinates(self):
+
+        print("=" * 50)
+        print("2. GOREV BASLANGIC VE BITIS KOORDINATLARI")
+        print("=" * 50)
+
+        print("Baslangic noktasi koordinatlarini gir")
+        start_lat = self.read_float("Baslangic latitude: ")
+        start_lon = self.read_float("Baslangic longitude: ")
+
+        print("-" * 50)
+
+        print("Bitis noktasi koordinatlarini gir")
+        finish_lat = self.read_float("Bitis latitude: ")
+        finish_lon = self.read_float("Bitis longitude: ")
+
+        self.start_point = {
+            "lat": start_lat,
+            "lon": start_lon
+        }
+
+        self.finish_point = {
+            "lat": finish_lat,
+            "lon": finish_lon
+        }
+
+        self.save_coordinates()
+
+    def save_coordinates(self):
+
+        data = {
+            "start_point": self.start_point,
+            "finish_point": self.finish_point
+        }
+
+        with open(MISSION2_COORDINATE_FILE, "w", encoding="utf-8") as file:
+            json.dump(data, file, indent=4)
+
+        print("=" * 50)
+        print("2. gorev koordinatlari kaydedildi")
+        print("Dosya:", MISSION2_COORDINATE_FILE)
+        print("=" * 50)
+
+    def load_coordinates(self):
+
+        if not os.path.exists(MISSION2_COORDINATE_FILE):
+            return False
+
+        with open(MISSION2_COORDINATE_FILE, "r", encoding="utf-8") as file:
+            data = json.load(file)
+
+        self.start_point = data.get("start_point")
+        self.finish_point = data.get("finish_point")
+
+        if self.start_point is None or self.finish_point is None:
+            return False
+
+        return True
+
+    def prepare_coordinates(self):
+
+        coordinates_loaded = self.load_coordinates()
+
+        if coordinates_loaded:
+            print("Kayitli 2. gorev koordinatlari bulundu.")
+            self.show_coordinates()
+
+            use_saved = input("Kayitli koordinatlar kullanilsin mi? E/H: ").strip().lower()
+
+            if use_saved != "e":
+                self.collect_coordinates()
+        else:
+            print("Kayitli 2. gorev koordinati bulunamadi.")
+            self.collect_coordinates()
+
+        self.show_coordinates()
+
+    def show_coordinates(self):
+
+        print("=" * 50)
+        print("2. GOREV KOORDINAT OZETI")
+        print("=" * 50)
+
+        print("Baslangic lat:", self.start_point.get("lat"))
+        print("Baslangic lon:", self.start_point.get("lon"))
+
+        print("-" * 50)
+
+        print("Bitis lat:", self.finish_point.get("lat"))
+        print("Bitis lon:", self.finish_point.get("lon"))
+
+        print("=" * 50)
+
     def get_expected_target(self):
 
-        # Sıradaki hedefi targeting.py içindeki görev sırasına göre alıyoruz.
-        # İlk başta mavi_altigen döner.
-        # Mavi altıgen tamamlandıktan sonra kirmizi_ucgen döner.
         return self.targeting.get_current_mission_target(
             self.completed_targets
         )
@@ -147,54 +358,76 @@ class MissionSystem:
             (width, height)
         )
 
-    def perform_first_mission(self):
+    def get_payload_name_for_target(self, target_name):
 
-        if self.infinity8_done:
-            return
+        if target_name == TARGET_BLUE_HEXAGON:
+            return "KIRMIZI YUK"
 
-        self.logger.write_log("1. GOREV BASLADI -> 8 CIZME")
+        if target_name == TARGET_RED_TRIANGLE:
+            return "MAVI YUK"
 
-        self.flight_controller.connect()
-        self.flight_controller.perform_infinity8()
-
-        self.infinity8_done = True
-
-        self.logger.write_log("1. GOREV TAMAMLANDI -> 8 CIZME")
+        return "BILINMEYEN YUK"
 
     def release_payload_sequence(self, current_target):
 
+        payload_name = self.get_payload_name_for_target(current_target)
+
         print("=" * 50)
         print("YUK BIRAKMA SEKANSI BASLADI")
-        print(f"Hedef: {current_target}")
+        print("Hedef:", current_target)
+        print("Birakilacak yuk:", payload_name)
         print("=" * 50)
 
-        # Hedef merkezdeyken önce hover.
         self.flight_controller.hover()
         time.sleep(0.5)
 
-        # Yük bırakma irtifasına alçal.
         self.flight_controller.descend(DROP_ALTITUDE)
         time.sleep(1)
 
-        # İrtifa azaldıktan sonra ilgili servo açılır.
-        self.payload.drop_payload(current_target)
+        if ALLOW_PAYLOAD_DROP and self.payload is not None:
+            self.payload.drop_payload(current_target)
+        else:
+            print(f"GUVENLI MOD -> {payload_name} birakma engellendi. Hedef: {current_target}")
+            self.logger.write_log(f"GUVENLI MOD -> {payload_name} simule edildi. Hedef: {current_target}")
 
-        # Yük bırakıldıktan sonra tekrar görev irtifasına yüksel.
         time.sleep(0.5)
+
         self.flight_controller.ascend(MISSION_ALTITUDE)
-
-        # Tekrar hover.
         time.sleep(0.5)
+
         self.flight_controller.hover()
 
         print("=" * 50)
         print("YUK BIRAKMA SEKANSI BITTI")
         print("=" * 50)
 
+    def go_to_finish_point(self):
+
+        if self.finish_point is None:
+            print("Bitis noktasi yok. Bitis noktasina gidilemiyor.")
+            return
+
+        print("=" * 50)
+        print("BITIS NOKTASINA GIDIS")
+        print("=" * 50)
+        print("Bitis lat:", self.finish_point.get("lat"))
+        print("Bitis lon:", self.finish_point.get("lon"))
+
+        if MISSION_SAFE_MODE:
+            print("GUVENLI MOD -> Bitis noktasina gercek ucus komutu gonderilmedi.")
+        else:
+            print("GERCEK MOD -> Bitis noktasina gidis komutu burada gonderilecek.")
+
+        self.finish_point_reached = True
+
+        print("=" * 50)
+
     def finish_mission(self, frame, target_data, fps):
 
+        self.go_to_finish_point()
+
         status = "GOREV TAMAMLANDI"
-        direction = "TUM YUKLER BIRAKILDI"
+        direction = "BITIS NOKTASI"
         mission_state = "GOREV_TAMAMLANDI"
         payload_status = "BIRAKILDI"
 
@@ -217,19 +450,14 @@ class MissionSystem:
 
         print("=" * 50)
         print("2. GOREV TAMAMLANDI")
-        print("TUM YUKLER BIRAKILDI")
+        print("KIRMIZI YUK -> MAVI ALTIGEN")
+        print("MAVI YUK -> KIRMIZI UCGEN")
+        print("BITIS NOKTASINA GIDIS TAMAMLANDI / SIMULE EDILDI")
         print("=" * 50)
 
         time.sleep(2)
 
     def find_wrong_detected_target(self, detections, expected_target):
-
-        # Model bir şey gördü ama sıradaki hedef o değilse
-        # bunu yanlış hedef olarak göstereceğiz.
-        #
-        # Örnek:
-        # Beklenen hedef mavi_altigen iken kirmizi_ucgen görünürse
-        # sistem bunu yok sayar.
 
         if expected_target is None:
             return None
@@ -245,12 +473,28 @@ class MissionSystem:
 
     def start(self):
 
-        # Önce 1. görev yapılır.
-        # Şu an PC test modunda sadece terminal mesajı olarak çalışır.
-        self.perform_first_mission()
+        print("=" * 50)
+        print("2. GOREV BASLATILIYOR")
+        print("GORUNTU ISLEME ILE YUK BIRAKMA")
+        print("=" * 50)
+        print("MISSION SAFE MODE:", MISSION_SAFE_MODE)
+        print("ALLOW PAYLOAD DROP:", ALLOW_PAYLOAD_DROP)
+        print("=" * 50)
+
+        self.prepare_coordinates()
+
+        connected = self.flight_controller.connect()
+
+        if not connected:
+            print("UYARI -> Cube baglantisi kurulamadi.")
+            print("2. gorev guvenli test modunda devam edecek.")
+            self.logger.write_log("UYARI -> Cube baglantisi kurulamadi")
 
         print("=" * 50)
-        print("2. GOREV BASLADI -> GORUNTU ISLEME ILE YUK BIRAKMA")
+        print("2. GOREV HEDEF SIRASI")
+        print("1 -> mavi_altigen: KIRMIZI YUK")
+        print("2 -> kirmizi_ucgen: MAVI YUK")
+        print("3 -> bitis noktasi")
         print("=" * 50)
 
         if not self.camera.is_opened():
@@ -263,7 +507,7 @@ class MissionSystem:
         self.logger.camera_opened()
         self.start_video_recording()
 
-        print("Gorev basladi.")
+        print("2. gorev kamera sistemi basladi.")
         self.logger.write_log("2. GOREV BASLADI")
 
         cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
@@ -287,9 +531,6 @@ class MissionSystem:
 
             detections = self.detector.detect(frame)
 
-            # targeting.py sadece sıradaki hedefi seçecek.
-            # Mesela sıradaki hedef mavi_altigen ise,
-            # kirmizi_ucgen algılansa bile target_data None döner.
             target_data = self.targeting.find_best_target(
                 detections=detections,
                 completed_targets=self.completed_targets,
@@ -344,24 +585,24 @@ class MissionSystem:
                 if is_centered:
 
                     self.stable_count += 1
+                    payload_text = self.get_payload_name_for_target(detected_target)
 
                     status = f"HEDEF ORTADA - {self.stable_count}/{STABLE_LIMIT}"
                     direction = "MERKEZDE"
                     mission_state = "MERKEZDE"
-                    payload_status = "BEKLIYOR"
+                    payload_status = payload_text
 
                     if self.stable_count >= STABLE_LIMIT:
 
                         status = "YUK BIRAKMA SEKANSI"
                         direction = "MERKEZDE"
                         mission_state = "YUK_BIRAKILIYOR"
-                        payload_status = "BIRAKILDI"
+                        payload_status = payload_text
 
                         self.release_payload_sequence(detected_target)
 
                         self.logger.payload_dropped(detected_target)
 
-                        # Sadece doğru sıradaki hedef tamamlandı olarak işaretlenir.
                         self.completed_targets[detected_target] = True
 
                         self.stable_count = 0
@@ -467,6 +708,8 @@ class MissionSystem:
 
     def stop(self):
 
+        self.flight_controller.close()
+
         self.camera.release()
 
         if self.video_writer is not None:
@@ -474,5 +717,5 @@ class MissionSystem:
 
         cv2.destroyAllWindows()
 
-        print("Sistem kapatildi.")
+        print("2. gorev sistemi kapatildi.")
         self.logger.system_stopped()
