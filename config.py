@@ -13,9 +13,8 @@ PROJECT_NAME = "TEKNOFEST IHA GOREV SISTEMI"
 
 MODEL_PATH = "best.pt"
 
-CONF_LIMIT = 0.60
+CONF_LIMIT = 0.40
 
-CONF_LIMIT = 0.60
 
 MAX_DETECTION = 1
 
@@ -23,7 +22,6 @@ IOU_LIMIT = 0.10
 
 # YOLO'nun üst üste binen kutuları temizlemesi için kullanılır.
 # Düşük olursa aynı hedefe çok fazla kutu çizmesini azaltır.
-IOU_LIMIT = 0.10
 
 
 # =========================================
@@ -97,7 +95,7 @@ CENTER_TOLERANCE_X = 40
 CENTER_TOLERANCE_Y = 40
 
 # Hedefin arka arkaya kac frame merkezde kalmasi gerektigi.
-STABLE_LIMIT = 5
+STABLE_LIMIT = 3
 
 
 # =========================================
