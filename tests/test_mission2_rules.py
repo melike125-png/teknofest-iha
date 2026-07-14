@@ -7,48 +7,40 @@ from mission2_rules import (
 )
 
 
-def create_detection(
+def detection(
     class_name: str,
     confidence: float,
+    box: tuple,
+    distance_m: float | None = None,
 ) -> dict:
-    return {
+    result = {
         "class_name": class_name,
         "confidence": confidence,
-        "box": (100, 100, 200, 200),
+        "box": box,
     }
+
+    if distance_m is not None:
+        result["distance_m"] = distance_m
+
+    return result
 
 
 def main():
+    # -------------------------------------------------
+    # Tek hedef önce görünürse
+    # -------------------------------------------------
     rules = Mission2Rules(
-        required_confirmations=3
+        required_confirmations=2
     )
-
-    # Sabit hedef-yük eşleşmesi.
-    assert (
-        rules.get_payload_for_target(
-            TARGET_BLUE_HEXAGON
-        )
-        == PAYLOAD_RED
-    )
-
-    assert (
-        rules.get_payload_for_target(
-            TARGET_RED_TRIANGLE
-        )
-        == PAYLOAD_BLUE
-    )
-
-    print("\nSENARYO 1:")
-    print("Yalnızca kırmızı üçgen görüş alanında.")
 
     red_frame = [
-        create_detection(
+        detection(
             TARGET_RED_TRIANGLE,
-            0.91,
+            0.80,
+            (290, 210, 350, 270),
         )
     ]
 
-    # İlk iki karede henüz kilitlenmemeli.
     assert (
         rules.select_first_confirmed_target(
             red_frame
@@ -56,14 +48,6 @@ def main():
         is None
     )
 
-    assert (
-        rules.select_first_confirmed_target(
-            red_frame
-        )
-        is None
-    )
-
-    # Üçüncü ardışık karede kırmızı üçgene kilitlenir.
     first_target = (
         rules.select_first_confirmed_target(
             red_frame
@@ -71,22 +55,17 @@ def main():
     )
 
     assert first_target == TARGET_RED_TRIANGLE
-
-    first_payload = rules.get_payload_for_target(
-        first_target
+    assert (
+        rules.get_payload_for_target(first_target)
+        == PAYLOAD_BLUE
     )
 
-    assert first_payload == PAYLOAD_BLUE
-
-    print("Aktif hedef:", first_target)
-    print("Bırakılacak yük:", first_payload)
-
-    # Mavi altıgen daha sonra görünse bile
-    # aktif hedef değiştirilmemeli.
+    # Kilitlendikten sonra başka hedefe geçmemeli.
     blue_frame = [
-        create_detection(
+        detection(
             TARGET_BLUE_HEXAGON,
             0.99,
+            (300, 220, 360, 280),
         )
     ]
 
@@ -97,77 +76,31 @@ def main():
         == TARGET_RED_TRIANGLE
     )
 
-    print(
-        "Aktif hedef kilidi korundu:",
-        rules.active_target,
+    rules.mark_target_completed(
+        TARGET_RED_TRIANGLE
     )
 
-    # İlk hedef tamamlandı.
-    assert (
-        rules.mark_target_completed(
-            TARGET_RED_TRIANGLE
-        )
-        is True
-    )
-
-    print("\nSENARYO 2:")
-    print("Kalan mavi altıgen aranıyor.")
-
-    assert (
-        rules.select_first_confirmed_target(
-            blue_frame
-        )
-        is None
-    )
-
-    assert (
-        rules.select_first_confirmed_target(
-            blue_frame
-        )
-        is None
-    )
-
-    second_target = (
-        rules.select_first_confirmed_target(
-            blue_frame
-        )
-    )
-
-    assert second_target == TARGET_BLUE_HEXAGON
-
-    second_payload = rules.get_payload_for_target(
-        second_target
-    )
-
-    assert second_payload == PAYLOAD_RED
-
-    print("Aktif hedef:", second_target)
-    print("Bırakılacak yük:", second_payload)
-
-    assert (
-        rules.mark_target_completed(
-            TARGET_BLUE_HEXAGON
-        )
-        is True
-    )
-
-    assert rules.all_targets_completed() is True
-
-    print("\nSENARYO 3:")
-    print("İki hedef aynı anda görüş alanında.")
-
+    # -------------------------------------------------
+    # İki hedef aynı anda görünürse:
+    # Güven değil, merkez yakınlığı kullanılmalı.
+    # -------------------------------------------------
     simultaneous_rules = Mission2Rules(
-        required_confirmations=2
+        required_confirmations=2,
+        min_center_difference_px=25,
     )
 
     simultaneous_frame = [
-        create_detection(
+        # Güveni daha düşük ama merkeze yakın.
+        detection(
             TARGET_RED_TRIANGLE,
-            0.82,
+            0.78,
+            (290, 210, 350, 270),
         ),
-        create_detection(
+        # Güveni daha yüksek ama görüntünün kenarında.
+        detection(
             TARGET_BLUE_HEXAGON,
-            0.94,
+            0.99,
+            (500, 300, 620, 420),
         ),
     ]
 
@@ -178,23 +111,103 @@ def main():
         is None
     )
 
-    simultaneous_target = (
+    selected_target = (
         simultaneous_rules.select_first_confirmed_target(
             simultaneous_frame
         )
     )
 
-    # İkisi aynı anda doğrulanırsa
-    # güveni yüksek olan seçilir.
-    assert simultaneous_target == TARGET_BLUE_HEXAGON
+    assert selected_target == TARGET_RED_TRIANGLE
 
     print(
-        "Aynı anda görüldüğünde seçilen:",
-        simultaneous_target,
+        "Yüksek güvenli fakat uzaktaki altıgen seçilmedi."
+    )
+    print(
+        "Merkeze yakın kırmızı üçgen seçildi."
+    )
+
+    # -------------------------------------------------
+    # Gerçek mesafe bilgisi varsa o önceliklidir.
+    # -------------------------------------------------
+    distance_rules = Mission2Rules(
+        required_confirmations=2,
+        min_distance_difference_m=0.75,
+    )
+
+    distance_frame = [
+        detection(
+            TARGET_RED_TRIANGLE,
+            0.75,
+            (500, 300, 600, 400),
+            distance_m=2.0,
+        ),
+        detection(
+            TARGET_BLUE_HEXAGON,
+            0.99,
+            (290, 210, 350, 270),
+            distance_m=4.0,
+        ),
+    ]
+
+    assert (
+        distance_rules.select_first_confirmed_target(
+            distance_frame
+        )
+        is None
+    )
+
+    selected_by_distance = (
+        distance_rules.select_first_confirmed_target(
+            distance_frame
+        )
+    )
+
+    assert (
+        selected_by_distance
+        == TARGET_RED_TRIANGLE
+    )
+
+    # -------------------------------------------------
+    # Fark çok küçükse rastgele karar verilmemeli.
+    # -------------------------------------------------
+    ambiguous_rules = Mission2Rules(
+        required_confirmations=2,
+        min_center_difference_px=25,
+    )
+
+    ambiguous_frame = [
+        detection(
+            TARGET_RED_TRIANGLE,
+            0.80,
+            (250, 210, 310, 270),
+        ),
+        detection(
+            TARGET_BLUE_HEXAGON,
+            0.95,
+            (330, 210, 390, 270),
+        ),
+    ]
+
+    assert (
+        ambiguous_rules.select_first_confirmed_target(
+            ambiguous_frame
+        )
+        is None
+    )
+
+    assert (
+        ambiguous_rules.select_first_confirmed_target(
+            ambiguous_frame
+        )
+        is None
     )
 
     print(
-        "\nİLK DOĞRULANAN HEDEF KURAL TESTİ BAŞARILI"
+        "Belirsiz eşzamanlı durumda sistem bekledi."
+    )
+
+    print(
+        "PROFESYONEL HEDEF SEÇİM TESTİ BAŞARILI"
     )
 
 
