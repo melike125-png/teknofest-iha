@@ -1,92 +1,201 @@
 from mission2_rules import (
-    PAYLOAD_BLUE,
-    PAYLOAD_RED,
+    Mission2Rules,
     TARGET_BLUE_HEXAGON,
     TARGET_RED_TRIANGLE,
-    get_payload_for_target,
-    select_nearest_pending_target,
+    PAYLOAD_RED,
+    PAYLOAD_BLUE,
 )
 
 
+def create_detection(
+    class_name: str,
+    confidence: float,
+) -> dict:
+    return {
+        "class_name": class_name,
+        "confidence": confidence,
+        "box": (100, 100, 200, 200),
+    }
+
+
 def main():
-    vehicle_position = {
-        "lat": 39.000000,
-        "lon": 32.000000,
-    }
+    rules = Mission2Rules(
+        required_confirmations=3
+    )
 
-    # Testte kırmızı üçgen dronea daha yakın.
-    target_positions = {
-        TARGET_BLUE_HEXAGON: {
-            "lat": 39.000500,
-            "lon": 32.000000,
-        },
-        TARGET_RED_TRIANGLE: {
-            "lat": 39.000100,
-            "lon": 32.000000,
-        },
-    }
-
-    completed_targets = {
-        TARGET_BLUE_HEXAGON: False,
-        TARGET_RED_TRIANGLE: False,
-    }
-
+    # Sabit hedef-yük eşleşmesi.
     assert (
-        get_payload_for_target(TARGET_BLUE_HEXAGON)
+        rules.get_payload_for_target(
+            TARGET_BLUE_HEXAGON
+        )
         == PAYLOAD_RED
     )
 
     assert (
-        get_payload_for_target(TARGET_RED_TRIANGLE)
+        rules.get_payload_for_target(
+            TARGET_RED_TRIANGLE
+        )
         == PAYLOAD_BLUE
     )
 
-    first_selection = select_nearest_pending_target(
-        vehicle_position=vehicle_position,
-        target_positions=target_positions,
-        completed_targets=completed_targets,
+    print("\nSENARYO 1:")
+    print("Yalnızca kırmızı üçgen görüş alanında.")
+
+    red_frame = [
+        create_detection(
+            TARGET_RED_TRIANGLE,
+            0.91,
+        )
+    ]
+
+    # İlk iki karede henüz kilitlenmemeli.
+    assert (
+        rules.select_first_confirmed_target(
+            red_frame
+        )
+        is None
     )
 
-    assert first_selection is not None
     assert (
-        first_selection["target_name"]
+        rules.select_first_confirmed_target(
+            red_frame
+        )
+        is None
+    )
+
+    # Üçüncü ardışık karede kırmızı üçgene kilitlenir.
+    first_target = (
+        rules.select_first_confirmed_target(
+            red_frame
+        )
+    )
+
+    assert first_target == TARGET_RED_TRIANGLE
+
+    first_payload = rules.get_payload_for_target(
+        first_target
+    )
+
+    assert first_payload == PAYLOAD_BLUE
+
+    print("Aktif hedef:", first_target)
+    print("Bırakılacak yük:", first_payload)
+
+    # Mavi altıgen daha sonra görünse bile
+    # aktif hedef değiştirilmemeli.
+    blue_frame = [
+        create_detection(
+            TARGET_BLUE_HEXAGON,
+            0.99,
+        )
+    ]
+
+    assert (
+        rules.select_first_confirmed_target(
+            blue_frame
+        )
         == TARGET_RED_TRIANGLE
     )
-    assert (
-        first_selection["payload_name"]
-        == PAYLOAD_BLUE
-    )
 
-    print("İlk seçilen hedef:", first_selection["target_name"])
-    print("Bırakılacak yük:", first_selection["payload_name"])
     print(
-        "Uzaklık:",
-        round(first_selection["distance_m"], 2),
-        "metre",
+        "Aktif hedef kilidi korundu:",
+        rules.active_target,
     )
 
-    completed_targets[TARGET_RED_TRIANGLE] = True
-
-    second_selection = select_nearest_pending_target(
-        vehicle_position=vehicle_position,
-        target_positions=target_positions,
-        completed_targets=completed_targets,
-    )
-
-    assert second_selection is not None
+    # İlk hedef tamamlandı.
     assert (
-        second_selection["target_name"]
-        == TARGET_BLUE_HEXAGON
+        rules.mark_target_completed(
+            TARGET_RED_TRIANGLE
+        )
+        is True
     )
+
+    print("\nSENARYO 2:")
+    print("Kalan mavi altıgen aranıyor.")
+
     assert (
-        second_selection["payload_name"]
-        == PAYLOAD_RED
+        rules.select_first_confirmed_target(
+            blue_frame
+        )
+        is None
     )
 
-    print("İkinci seçilen hedef:", second_selection["target_name"])
-    print("Bırakılacak yük:", second_selection["payload_name"])
+    assert (
+        rules.select_first_confirmed_target(
+            blue_frame
+        )
+        is None
+    )
 
-    print("EN YAKIN HEDEF SEÇİM TESTİ BAŞARILI")
+    second_target = (
+        rules.select_first_confirmed_target(
+            blue_frame
+        )
+    )
+
+    assert second_target == TARGET_BLUE_HEXAGON
+
+    second_payload = rules.get_payload_for_target(
+        second_target
+    )
+
+    assert second_payload == PAYLOAD_RED
+
+    print("Aktif hedef:", second_target)
+    print("Bırakılacak yük:", second_payload)
+
+    assert (
+        rules.mark_target_completed(
+            TARGET_BLUE_HEXAGON
+        )
+        is True
+    )
+
+    assert rules.all_targets_completed() is True
+
+    print("\nSENARYO 3:")
+    print("İki hedef aynı anda görüş alanında.")
+
+    simultaneous_rules = Mission2Rules(
+        required_confirmations=2
+    )
+
+    simultaneous_frame = [
+        create_detection(
+            TARGET_RED_TRIANGLE,
+            0.82,
+        ),
+        create_detection(
+            TARGET_BLUE_HEXAGON,
+            0.94,
+        ),
+    ]
+
+    assert (
+        simultaneous_rules.select_first_confirmed_target(
+            simultaneous_frame
+        )
+        is None
+    )
+
+    simultaneous_target = (
+        simultaneous_rules.select_first_confirmed_target(
+            simultaneous_frame
+        )
+    )
+
+    # İkisi aynı anda doğrulanırsa
+    # güveni yüksek olan seçilir.
+    assert simultaneous_target == TARGET_BLUE_HEXAGON
+
+    print(
+        "Aynı anda görüldüğünde seçilen:",
+        simultaneous_target,
+    )
+
+    print(
+        "\nİLK DOĞRULANAN HEDEF KURAL TESTİ BAŞARILI"
+    )
 
 
 if __name__ == "__main__":
