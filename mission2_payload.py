@@ -208,7 +208,7 @@ class Mission2Payload:
         self.ui = Mission2UI()
 
         self.flight_controller = FlightController(
-            use_real_cube=True
+            use_real_cube=not MISSION_SAFE_MODE
         )
 
         self.start_point = None
