@@ -1,0 +1,74 @@
+{
+    "schema_version": 1,
+    "field_name": "prova_sahasi",
+  
+    "coordinate_source": "ORGANIZER_PROVIDED",
+  
+    "start_line": {
+      "left": {
+        "lat": 39.0000000,
+        "lon": 32.0000000
+      },
+      "right": {
+        "lat": 39.0000000,
+        "lon": 32.0000500
+      }
+    },
+  
+    "takeoff_point": {
+      "lat": 39.0000200,
+      "lon": 32.0000200
+    },
+  
+    "pole_1": {
+      "lat": 39.0003000,
+      "lon": 32.0003000
+    },
+  
+    "pole_2": {
+      "lat": 39.0016500,
+      "lon": 32.0003000
+    },
+  
+    "search_polygon": [
+      {
+        "lat": 39.0005000,
+        "lon": 32.0005000
+      },
+      {
+        "lat": 39.0005000,
+        "lon": 32.0010000
+      },
+      {
+        "lat": 39.0008000,
+        "lon": 32.0010000
+      },
+      {
+        "lat": 39.0008000,
+        "lon": 32.0005000
+      }
+    ],
+  
+    "landing_point": {
+      "lat": 39.0000300,
+      "lon": 32.0000300
+    },
+  
+    "altitudes": {
+      "mission_m": 25.0,
+      "search_m": 20.0,
+      "drop_m": 10.0
+    },
+  
+    "route": {
+      "pole_clearance_m": 12.0,
+      "search_line_spacing_m": 5.0
+    },
+  
+    "safety": {
+      "maximum_altitude_m": 120.0,
+      "minimum_battery_percent": 30.0,
+      "maximum_horizontal_speed_m_s": 4.0,
+      "maximum_drop_speed_m_s": 1.0
+    }
+  }
