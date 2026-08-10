@@ -8,12 +8,14 @@ from config import (
     CENTER_TOLERANCE_X,
     CENTER_TOLERANCE_Y,
     DROP_ALTITUDE,
+    MAVLINK_TELEMETRY_ENABLED,
     MISSION_ALTITUDE,
     STABLE_LIMIT,
     TARGET_BLUE_HEXAGON,
     TARGET_RED_TRIANGLE,
     VIDEO_OUTPUT_NAME,
 )
+
 from camera import CameraSystem
 from detector import DetectorSystem
 from failsafe import FailsafeSystem
@@ -208,8 +210,8 @@ class Mission2Payload:
         self.ui = Mission2UI()
 
         self.flight_controller = FlightController(
-            use_real_cube=not MISSION_SAFE_MODE
-        )
+            use_real_cube=MAVLINK_TELEMETRY_ENABLED
+)
 
         self.start_point = None
         self.finish_point = None
