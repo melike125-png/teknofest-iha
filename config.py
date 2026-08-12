@@ -6,6 +6,25 @@
 
 PROJECT_NAME = "TEKNOFEST IHA GOREV SISTEMI"
 
+# =========================================
+# MAVLINK BAGLANTI AYARLARI
+# =========================================
+
+# SIMULATION: Gazebo/SITL
+# REAL_CUBE: Gercek Cube USB baglantisi
+MAVLINK_CONNECTION_MODE = "SIMULATION"
+
+MAVLINK_CONNECTIONS = {
+    "SIMULATION": "udpin:127.0.0.1:14560",
+    "REAL_CUBE": "/dev/ttyACM0",
+}
+
+MAVLINK_BAUD = 115200
+MAVLINK_TELEMETRY_ENABLED = True
+
+# False kaldigi surece arm, kalkis, hareket ve inis komutlari yasaktir.
+MAVLINK_COMMANDS_ENABLED = False
+
 
 # =========================================
 # MODEL
@@ -16,7 +35,7 @@ MODEL_PATH = "best.pt"
 CONF_LIMIT = 0.40
 
 
-MAX_DETECTION = 1
+MAX_DETECTION = 4
 
 IOU_LIMIT = 0.10
 

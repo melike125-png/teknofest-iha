@@ -1,40 +1,39 @@
-import time
 import json
 import os
+import time
+
 import cv2
 
 from config import (
+    CENTER_TOLERANCE_X,
+    CENTER_TOLERANCE_Y,
+    DROP_ALTITUDE,
+    MAVLINK_TELEMETRY_ENABLED,
+    MISSION_ALTITUDE,
     STABLE_LIMIT,
-    VIDEO_OUTPUT_NAME,
     TARGET_BLUE_HEXAGON,
     TARGET_RED_TRIANGLE,
-    MISSION_ALTITUDE,
-    DROP_ALTITUDE,
-    CENTER_TOLERANCE_X,
-    CENTER_TOLERANCE_Y
+    VIDEO_OUTPUT_NAME,
 )
 
 from camera import CameraSystem
 from detector import DetectorSystem
-from payload import PayloadSystem
-from targeting import TargetingSystem
-from ui import draw_professional_camera_screen
-from logger import LoggerSystem
 from failsafe import FailsafeSystem
 from flight_controller import FlightController
+from logger import LoggerSystem
+from mission2_rules import Mission2Rules
+from payload_controller import SimulatedPayloadController
+from targeting import TargetingSystem
 
 
 WINDOW_NAME = "TEKNOFEST IHA 2. GOREV SISTEMI"
 DISPLAY_WIDTH = 1280
 DISPLAY_HEIGHT = 720
-
 MISSION2_COORDINATE_FILE = "mission2_coordinates.json"
-
 MISSION_SAFE_MODE = True
-ALLOW_PAYLOAD_DROP = False
+
 
 class Mission2UI:
-
     def draw(
         self,
         frame,
@@ -45,21 +44,29 @@ class Mission2UI:
         fps=0,
         stable_count=0,
         mission_state="",
-        payload_status=""
+        payload_status="",
     ):
         display_frame = frame.copy()
-
-        h, w = display_frame.shape[:2]
+        height, width = display_frame.shape[:2]
 
         if target_data is not None:
             box = target_data.get("box")
 
-            if box is not None:
-                x1, y1, x2, y2 = box
-                cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 3)
+            if box is not None and len(box) == 4:
+                x1, y1, x2, y2 = [int(value) for value in box]
 
-                label = target_data.get("class_name", "target")
-                confidence = target_data.get("confidence", 0)
+                cv2.rectangle(
+                    display_frame,
+                    (x1, y1),
+                    (x2, y2),
+                    (0, 255, 0),
+                    3,
+                )
+
+                label = target_data.get("class_name", "hedef")
+                confidence = float(
+                    target_data.get("confidence", 0.0)
+                )
 
                 cv2.putText(
                     display_frame,
@@ -68,298 +75,611 @@ class Mission2UI:
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.7,
                     (0, 255, 0),
-                    2
+                    2,
                 )
 
-                center = target_data.get("target_center")
+                target_center = target_data.get("target_center")
 
-                if center is not None:
-                    cx, cy = center
-                    cv2.circle(display_frame, (cx, cy), 6, (0, 255, 0), -1)
-                    cv2.line(display_frame, (w // 2, h // 2), (cx, cy), (0, 255, 0), 2)
+                if target_center is not None:
+                    target_x, target_y = target_center
+                    target_x = int(target_x)
+                    target_y = int(target_y)
 
-        cv2.circle(display_frame, (w // 2, h // 2), 7, (0, 255, 255), -1)
-        cv2.line(display_frame, (w // 2 - 25, h // 2), (w // 2 + 25, h // 2), (0, 255, 255), 2)
-        cv2.line(display_frame, (w // 2, h // 2 - 25), (w // 2, h // 2 + 25), (0, 255, 255), 2)
+                    cv2.circle(
+                        display_frame,
+                        (target_x, target_y),
+                        6,
+                        (0, 255, 0),
+                        -1,
+                    )
 
-        panel_h = 190
+                    cv2.line(
+                        display_frame,
+                        (width // 2, height // 2),
+                        (target_x, target_y),
+                        (0, 255, 0),
+                        2,
+                    )
+
+        cv2.circle(
+            display_frame,
+            (width // 2, height // 2),
+            7,
+            (0, 255, 255),
+            -1,
+        )
+
+        cv2.line(
+            display_frame,
+            (width // 2 - 25, height // 2),
+            (width // 2 + 25, height // 2),
+            (0, 255, 255),
+            2,
+        )
+
+        cv2.line(
+            display_frame,
+            (width // 2, height // 2 - 25),
+            (width // 2, height // 2 + 25),
+            (0, 255, 255),
+            2,
+        )
+
+        panel_height = 205
         overlay = display_frame.copy()
-        cv2.rectangle(overlay, (0, 0), (w, panel_h), (0, 0, 0), -1)
-        display_frame = cv2.addWeighted(overlay, 0.65, display_frame, 0.35, 0)
 
-        if current_target is None:
-            current_target_text = "YOK"
-        else:
-            current_target_text = current_target
+        cv2.rectangle(
+            overlay,
+            (0, 0),
+            (width, panel_height),
+            (0, 0, 0),
+            -1,
+        )
+
+        display_frame = cv2.addWeighted(
+            overlay,
+            0.68,
+            display_frame,
+            0.32,
+            0,
+        )
+
+        current_target_text = current_target or "YOK"
 
         lines = [
             f"2. GOREV | FPS: {fps:.1f}",
-            f"SIRADAKI HEDEF: {current_target_text}",
+            f"AKTIF HEDEF: {current_target_text}",
             f"DURUM: {status}",
             f"YON: {direction}",
-            f"YUK: {payload_status}",
-            f"STABLE: {stable_count}"
+            f"GOREV ADIMI: {mission_state}",
+            f"YUK DURUMU: {payload_status}",
+            f"MERKEZ SABITLIGI: {stable_count}/{STABLE_LIMIT}",
         ]
 
-        y = 32
+        y_position = 28
 
-        for index, line in enumerate(lines):
-            if index == 0:
-                color = (0, 255, 255)
-                scale = 0.75
-                thickness = 2
-            elif "SIRADAKI" in line:
-                color = (255, 255, 255)
-                scale = 0.65
-                thickness = 2
-            elif "DURUM" in line:
-                color = (0, 255, 255)
-                scale = 0.65
-                thickness = 2
-            else:
-                color = (220, 220, 220)
-                scale = 0.62
-                thickness = 2
-
+        for line in lines:
             cv2.putText(
                 display_frame,
                 line,
-                (25, y),
+                (18, y_position),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                scale,
-                color,
-                thickness
+                0.58,
+                (255, 255, 255),
+                2,
             )
 
-            y += 30
+            y_position += 27
 
         return display_frame
-        
+
+
 class Mission2Payload:
+    """
+    Guvenli ikinci gorev akisi.
+
+    Sabit hedef sirasi yoktur.
+
+    Ilk guvenilir sekilde dogrulanan hedef kilitlenir.
+    Yuk islemi tamamlanana kadar hedef kilidi degismez.
+    """
 
     def __init__(self):
-
         self.logger = LoggerSystem()
-        self.logger.system_started()
+        self._safe_log("system_started")
 
         self.failsafe = FailsafeSystem()
-
         self.camera = CameraSystem()
         self.detector = DetectorSystem()
 
-        if ALLOW_PAYLOAD_DROP:
-            self.payload = PayloadSystem()
-        else:
-            self.payload = None
-            print("GUVENLI MOD -> Payload sistemi fiziksel olarak baslatilmadi.")
+        self.payload = SimulatedPayloadController()
+
+        print(
+            "GUVENLI MOD -> Fiziksel yuk mekanizmasi devre disi, "
+            "simulasyon kontrolu kullaniliyor."
+        )
 
         self.targeting = TargetingSystem()
-        self.ui = Mission2UI()
-        self.flight_controller = FlightController(use_real_cube=True)
 
-        self.completed_targets = {
-            TARGET_BLUE_HEXAGON: False,
-            TARGET_RED_TRIANGLE: False
-        }
+        self.rules = Mission2Rules(
+            required_confirmations=STABLE_LIMIT
+        )
+
+        self.completed_targets = self.rules.completed_targets
+
+        self.ui = Mission2UI()
+
+        self.flight_controller = FlightController(
+            use_real_cube=MAVLINK_TELEMETRY_ENABLED
+)
 
         self.start_point = None
         self.finish_point = None
+        self.finish_point_reached = False
 
         self.stable_count = 0
-        self.prev_time = 0
+        self.prev_time = 0.0
         self.video_writer = None
 
-        self.last_target_log_time = 0
-        self.last_lost_log_time = 0
-        self.last_wrong_target_log_time = 0
-        self.last_approach_log_time = 0
+        self.last_target_log_time = 0.0
+        self.last_lost_log_time = 0.0
+        self.last_approach_log_time = 0.0
 
         self.TARGET_LOG_INTERVAL = 0.7
         self.LOST_LOG_INTERVAL = 1.0
-        self.WRONG_TARGET_LOG_INTERVAL = 1.0
         self.APPROACH_LOG_INTERVAL = 0.5
 
-        self.finish_point_reached = False
+        self._fallback_confirmation_counts = {
+            TARGET_BLUE_HEXAGON: 0,
+            TARGET_RED_TRIANGLE: 0,
+        }
+
+    def _safe_log(self, method_name, *args):
+        try:
+            method = getattr(
+                self.logger,
+                method_name,
+                None,
+            )
+
+            if callable(method):
+                method(*args)
+
+        except Exception as error:
+            print(
+                f"LOG UYARISI -> {method_name}: {error}"
+            )
 
     def read_float(self, text):
-
         while True:
             value = input(text).strip()
             value = value.replace(",", ".")
 
             try:
                 return float(value)
+
             except ValueError:
                 print("Gecersiz deger. Tekrar gir.")
 
     def collect_coordinates(self):
-
         print("=" * 50)
         print("2. GOREV BASLANGIC VE BITIS KOORDINATLARI")
         print("=" * 50)
 
-        print("Baslangic noktasi koordinatlarini gir")
-        start_lat = self.read_float("Baslangic latitude: ")
-        start_lon = self.read_float("Baslangic longitude: ")
+        start_lat = self.read_float(
+            "Baslangic latitude: "
+        )
+
+        start_lon = self.read_float(
+            "Baslangic longitude: "
+        )
 
         print("-" * 50)
 
-        print("Bitis noktasi koordinatlarini gir")
-        finish_lat = self.read_float("Bitis latitude: ")
-        finish_lon = self.read_float("Bitis longitude: ")
+        finish_lat = self.read_float(
+            "Bitis latitude: "
+        )
+
+        finish_lon = self.read_float(
+            "Bitis longitude: "
+        )
 
         self.start_point = {
             "lat": start_lat,
-            "lon": start_lon
+            "lon": start_lon,
         }
 
         self.finish_point = {
             "lat": finish_lat,
-            "lon": finish_lon
+            "lon": finish_lon,
         }
 
         self.save_coordinates()
 
     def save_coordinates(self):
-
         data = {
             "start_point": self.start_point,
-            "finish_point": self.finish_point
+            "finish_point": self.finish_point,
         }
 
-        with open(MISSION2_COORDINATE_FILE, "w", encoding="utf-8") as file:
-            json.dump(data, file, indent=4)
+        with open(
+            MISSION2_COORDINATE_FILE,
+            "w",
+            encoding="utf-8",
+        ) as file:
+            json.dump(
+                data,
+                file,
+                indent=4,
+            )
 
-        print("=" * 50)
-        print("2. gorev koordinatlari kaydedildi")
-        print("Dosya:", MISSION2_COORDINATE_FILE)
-        print("=" * 50)
+        print("2. gorev koordinatlari kaydedildi.")
 
     def load_coordinates(self):
-
-        if not os.path.exists(MISSION2_COORDINATE_FILE):
+        if not os.path.exists(
+            MISSION2_COORDINATE_FILE
+        ):
             return False
 
-        with open(MISSION2_COORDINATE_FILE, "r", encoding="utf-8") as file:
-            data = json.load(file)
+        try:
+            with open(
+                MISSION2_COORDINATE_FILE,
+                "r",
+                encoding="utf-8",
+            ) as file:
+                data = json.load(file)
+
+        except (
+            OSError,
+            json.JSONDecodeError,
+        ) as error:
+            print(
+                "Koordinat dosyasi okunamadi:",
+                error,
+            )
+
+            return False
 
         self.start_point = data.get("start_point")
         self.finish_point = data.get("finish_point")
 
-        if self.start_point is None or self.finish_point is None:
-            return False
-
-        return True
+        return (
+            self.start_point is not None
+            and self.finish_point is not None
+        )
 
     def prepare_coordinates(self):
-
         coordinates_loaded = self.load_coordinates()
 
         if coordinates_loaded:
-            print("Kayitli 2. gorev koordinatlari bulundu.")
+            print(
+                "Kayitli 2. gorev koordinatlari bulundu."
+            )
+
             self.show_coordinates()
 
-            use_saved = input("Kayitli koordinatlar kullanilsin mi? E/H: ").strip().lower()
+            use_saved = input(
+                "Kayitli koordinatlar kullanilsin mi? E/H: "
+            ).strip().lower()
 
             if use_saved != "e":
                 self.collect_coordinates()
+
         else:
-            print("Kayitli 2. gorev koordinati bulunamadi.")
+            print(
+                "Kayitli 2. gorev koordinati bulunamadi."
+            )
+
             self.collect_coordinates()
 
         self.show_coordinates()
 
     def show_coordinates(self):
-
         print("=" * 50)
         print("2. GOREV KOORDINAT OZETI")
         print("=" * 50)
 
-        print("Baslangic lat:", self.start_point.get("lat"))
-        print("Baslangic lon:", self.start_point.get("lon"))
+        print(
+            "Baslangic lat:",
+            self.start_point.get("lat"),
+        )
+
+        print(
+            "Baslangic lon:",
+            self.start_point.get("lon"),
+        )
 
         print("-" * 50)
 
-        print("Bitis lat:", self.finish_point.get("lat"))
-        print("Bitis lon:", self.finish_point.get("lon"))
+        print(
+            "Bitis lat:",
+            self.finish_point.get("lat"),
+        )
+
+        print(
+            "Bitis lon:",
+            self.finish_point.get("lon"),
+        )
 
         print("=" * 50)
 
     def get_expected_target(self):
-
-        return self.targeting.get_current_mission_target(
-            self.completed_targets
+        return getattr(
+            self.rules,
+            "active_target",
+            None,
         )
 
     def all_targets_completed(self):
+        method = getattr(
+            self.rules,
+            "all_targets_completed",
+            None,
+        )
 
-        return (
-            self.completed_targets[TARGET_BLUE_HEXAGON]
-            and self.completed_targets[TARGET_RED_TRIANGLE]
+        if callable(method):
+            return bool(method())
+
+        return bool(
+            self.completed_targets.get(
+                TARGET_BLUE_HEXAGON,
+                False,
+            )
+            and self.completed_targets.get(
+                TARGET_RED_TRIANGLE,
+                False,
+            )
         )
 
     def calculate_fps(self):
-
         current_time = time.time()
 
         if self.prev_time == 0:
-            fps = 0
+            fps = 0.0
+
         else:
-            fps = 1 / (current_time - self.prev_time)
+            elapsed = current_time - self.prev_time
+
+            if elapsed > 0:
+                fps = 1.0 / elapsed
+            else:
+                fps = 0.0
 
         self.prev_time = current_time
 
         return fps
 
-    def can_print(self, last_time, interval):
+    @staticmethod
+    def can_print(last_time, interval):
+        return time.time() - last_time >= interval
 
-        current_time = time.time()
+    @staticmethod
+    def _normalize_selected_target(result):
+        if isinstance(result, str):
+            return result
 
-        if current_time - last_time >= interval:
-            return True
+        if isinstance(result, dict):
+            return (
+                result.get("target_name")
+                or result.get("class_name")
+                or result.get("active_target")
+            )
 
-        return False
+        return None
 
-    def format_panel_direction(self, target_data):
+    def _select_active_target(self, detections):
+        active_target = self.get_expected_target()
 
-        if target_data is None:
-            return "HEDEF_YOK"
+        if active_target is not None:
+            return active_target
 
-        directions = []
-        error_x = target_data.get("error_x", 0)
-        error_y = target_data.get("error_y", 0)
-
-        if error_x > CENTER_TOLERANCE_X:
-            directions.append("SAG")
-        elif error_x < -CENTER_TOLERANCE_X:
-            directions.append("SOL")
-
-        if error_y > CENTER_TOLERANCE_Y:
-            directions.append("ASAGI")
-        elif error_y < -CENTER_TOLERANCE_Y:
-            directions.append("YUKARI")
-
-        if not directions:
-            return "MERKEZDE"
-
-        return " ".join(directions)
-
-    def start_video_recording(self):
-
-        width = self.camera.get_width()
-        height = self.camera.get_height()
-
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-
-        self.video_writer = cv2.VideoWriter(
-            VIDEO_OUTPUT_NAME,
-            fourcc,
-            20.0,
-            (width, height)
+        candidate_method_names = (
+            "select_first_confirmed_target",
+            "select_target",
+            "process_detections",
+            "update",
+            "choose_target",
         )
 
-    def get_payload_name_for_target(self, target_name):
+        for method_name in candidate_method_names:
+            method = getattr(
+                self.rules,
+                method_name,
+                None,
+            )
 
+            if not callable(method):
+                continue
+
+            try:
+                result = method(detections)
+
+            except TypeError:
+                continue
+
+            selected_target = (
+                self._normalize_selected_target(result)
+            )
+
+            if selected_target is None:
+                selected_target = (
+                    self.get_expected_target()
+                )
+
+            if selected_target in (
+                TARGET_BLUE_HEXAGON,
+                TARGET_RED_TRIANGLE,
+            ):
+                return selected_target
+
+        return self._fallback_select_target(
+            detections
+        )
+
+    def _fallback_select_target(self, detections):
+        valid_by_name = {
+            TARGET_BLUE_HEXAGON: [],
+            TARGET_RED_TRIANGLE: [],
+        }
+
+        for detection in detections:
+            class_name = detection.get("class_name")
+
+            if class_name not in valid_by_name:
+                continue
+
+            if self.completed_targets.get(
+                class_name,
+                False,
+            ):
+                continue
+
+            valid_by_name[class_name].append(
+                detection
+            )
+
+        visible_targets = [
+            target_name
+            for (
+                target_name,
+                target_detections,
+            ) in valid_by_name.items()
+            if target_detections
+        ]
+
+        for target_name in (
+            self._fallback_confirmation_counts
+        ):
+            if target_name in visible_targets:
+                self._fallback_confirmation_counts[
+                    target_name
+                ] += 1
+
+            else:
+                self._fallback_confirmation_counts[
+                    target_name
+                ] = 0
+
+        confirmed_targets = [
+            target_name
+            for target_name in visible_targets
+            if self._fallback_confirmation_counts[
+                target_name
+            ] >= STABLE_LIMIT
+        ]
+
+        selected_target = None
+
+        if len(confirmed_targets) == 1:
+            selected_target = confirmed_targets[0]
+
+        elif len(confirmed_targets) == 2:
+            center_x = getattr(
+                self.targeting,
+                "frame_center_x",
+                320,
+            )
+
+            center_y = getattr(
+                self.targeting,
+                "frame_center_y",
+                240,
+            )
+
+            center_distances = {}
+
+            for target_name in confirmed_targets:
+                detection = valid_by_name[
+                    target_name
+                ][0]
+
+                box = detection.get("box")
+
+                if box is None or len(box) != 4:
+                    continue
+
+                x1, y1, x2, y2 = [
+                    int(value)
+                    for value in box
+                ]
+
+                target_x = (x1 + x2) // 2
+                target_y = (y1 + y2) // 2
+
+                center_distances[target_name] = (
+                    (
+                        target_x - center_x
+                    ) ** 2
+                    + (
+                        target_y - center_y
+                    ) ** 2
+                ) ** 0.5
+
+            if len(center_distances) == 2:
+                sorted_targets = sorted(
+                    center_distances,
+                    key=center_distances.get,
+                )
+
+                distance_difference = abs(
+                    center_distances[
+                        sorted_targets[0]
+                    ]
+                    - center_distances[
+                        sorted_targets[1]
+                    ]
+                )
+
+                if distance_difference >= 10.0:
+                    selected_target = sorted_targets[0]
+
+        if selected_target is not None:
+            self.rules.active_target = (
+                selected_target
+            )
+
+        return selected_target
+
+    def _mark_target_completed(
+        self,
+        target_name,
+    ):
+        candidate_method_names = (
+            "mark_target_completed",
+            "complete_target",
+            "set_target_completed",
+        )
+
+        for method_name in candidate_method_names:
+            method = getattr(
+                self.rules,
+                method_name,
+                None,
+            )
+
+            if callable(method):
+                try:
+                    method(target_name)
+                    break
+
+                except TypeError:
+                    continue
+
+        self.completed_targets[target_name] = True
+        self.rules.active_target = None
+
+        self._fallback_confirmation_counts[
+            TARGET_BLUE_HEXAGON
+        ] = 0
+
+        self._fallback_confirmation_counts[
+            TARGET_RED_TRIANGLE
+        ] = 0
+
+    @staticmethod
+    def get_payload_name_for_target(
+        target_name,
+    ):
         if target_name == TARGET_BLUE_HEXAGON:
             return "KIRMIZI YUK"
 
@@ -368,354 +688,498 @@ class Mission2Payload:
 
         return "BILINMEYEN YUK"
 
-    def release_payload_sequence(self, current_target):
+    def format_panel_direction(
+        self,
+        target_data,
+    ):
+        if target_data is None:
+            return "HEDEF YOK"
 
-        payload_name = self.get_payload_name_for_target(current_target)
+        directions = []
+
+        error_x = int(
+            target_data.get("error_x", 0)
+        )
+
+        error_y = int(
+            target_data.get("error_y", 0)
+        )
+
+        if error_x > CENTER_TOLERANCE_X:
+            directions.append("SAG")
+
+        elif error_x < -CENTER_TOLERANCE_X:
+            directions.append("SOL")
+
+        if error_y > CENTER_TOLERANCE_Y:
+            directions.append("ASAGI")
+
+        elif error_y < -CENTER_TOLERANCE_Y:
+            directions.append("YUKARI")
+
+        if directions:
+            return " ".join(directions)
+
+        return "MERKEZDE"
+
+    def start_video_recording(self):
+        width = self.camera.get_width()
+        height = self.camera.get_height()
+
+        fourcc = cv2.VideoWriter_fourcc(
+            *"mp4v"
+        )
+
+        self.video_writer = cv2.VideoWriter(
+            VIDEO_OUTPUT_NAME,
+            fourcc,
+            20.0,
+            (width, height),
+        )
+
+        if not self.video_writer.isOpened():
+            print(
+                "UYARI -> Video kaydi baslatilamadi."
+            )
+
+            self.video_writer = None
+
+    def release_payload_sequence(
+        self,
+        current_target,
+    ):
+        payload_name = (
+            self.get_payload_name_for_target(
+                current_target
+            )
+        )
 
         print("=" * 50)
         print("YUK BIRAKMA SEKANSI BASLADI")
         print("Hedef:", current_target)
-        print("Birakilacak yuk:", payload_name)
+        print("Yuk:", payload_name)
         print("=" * 50)
 
         self.flight_controller.hover()
         time.sleep(0.5)
 
-        self.flight_controller.descend(DROP_ALTITUDE)
-        time.sleep(1)
+        self.flight_controller.descend(
+            DROP_ALTITUDE
+        )
 
-        if ALLOW_PAYLOAD_DROP and self.payload is not None:
-            self.payload.drop_payload(current_target)
+        time.sleep(1.0)
+
+        if current_target == TARGET_BLUE_HEXAGON:
+            self.payload.release_red_payload()
+
+        elif current_target == TARGET_RED_TRIANGLE:
+            self.payload.release_blue_payload()
+
         else:
-            print(f"GUVENLI MOD -> {payload_name} birakma engellendi. Hedef: {current_target}")
-            self.logger.write_log(f"GUVENLI MOD -> {payload_name} simule edildi. Hedef: {current_target}")
+            print(
+                "Bilinmeyen hedef. Yuk birakilmadi."
+            )
+
+            return False
+
+        self.payload.center_remaining_payload()
+
+        self._safe_log(
+            "write_log",
+            f"GUVENLI MOD -> {payload_name} simule edildi. "
+            f"Hedef: {current_target}",
+        )
 
         time.sleep(0.5)
 
-        self.flight_controller.ascend(MISSION_ALTITUDE)
+        self.flight_controller.ascend(
+            MISSION_ALTITUDE
+        )
+
         time.sleep(0.5)
 
         self.flight_controller.hover()
 
-        print("=" * 50)
         print("YUK BIRAKMA SEKANSI BITTI")
-        print("=" * 50)
+
+        return True
 
     def go_to_finish_point(self):
-
         if self.finish_point is None:
-            print("Bitis noktasi yok. Bitis noktasina gidilemiyor.")
-            return
+            print("Bitis noktasi yok.")
+            return False
 
         print("=" * 50)
         print("BITIS NOKTASINA GIDIS")
-        print("=" * 50)
-        print("Bitis lat:", self.finish_point.get("lat"))
-        print("Bitis lon:", self.finish_point.get("lon"))
+
+        print(
+            "Bitis lat:",
+            self.finish_point.get("lat"),
+        )
+
+        print(
+            "Bitis lon:",
+            self.finish_point.get("lon"),
+        )
 
         if MISSION_SAFE_MODE:
-            print("GUVENLI MOD -> Bitis noktasina gercek ucus komutu gonderilmedi.")
-        else:
-            print("GERCEK MOD -> Bitis noktasina gidis komutu burada gonderilecek.")
+            print(
+                "GUVENLI MOD -> Gercek ucus komutu "
+                "gonderilmedi."
+            )
 
         self.finish_point_reached = True
 
         print("=" * 50)
 
-    def finish_mission(self, frame, target_data, fps):
+        return True
 
+    def finish_mission(
+        self,
+        frame,
+        target_data,
+        fps,
+    ):
         self.go_to_finish_point()
+        self._safe_log("mission_completed")
 
-        status = "GOREV TAMAMLANDI"
-        direction = "BITIS NOKTASI"
-        mission_state = "GOREV_TAMAMLANDI"
-        payload_status = "BIRAKILDI"
-
-        self.logger.mission_completed()
-
-        self.ui.draw(
+        display_frame = self.ui.draw(
             frame=frame,
             target_data=target_data,
             current_target=None,
-            status=status,
-            direction=direction,
+            status="GOREV TAMAMLANDI",
+            direction="BITIS NOKTASI",
             fps=fps,
             stable_count=0,
-            mission_state=mission_state,
-            payload_status=payload_status
+            mission_state="GOREV TAMAMLANDI",
+            payload_status="IKI YUK DE BIRAKILDI",
         )
 
         if self.video_writer is not None:
-            self.video_writer.write(frame)
+            self.video_writer.write(
+                display_frame
+            )
+
+        cv2.imshow(
+            WINDOW_NAME,
+            display_frame,
+        )
+
+        cv2.waitKey(500)
 
         print("=" * 50)
         print("2. GOREV TAMAMLANDI")
         print("KIRMIZI YUK -> MAVI ALTIGEN")
         print("MAVI YUK -> KIRMIZI UCGEN")
-        print("BITIS NOKTASINA GIDIS TAMAMLANDI / SIMULE EDILDI")
+        print(
+            "BITIS NOKTASINA GIDIS SIMULE EDILDI"
+        )
         print("=" * 50)
-
-        time.sleep(2)
-
-    def find_wrong_detected_target(self, detections, expected_target):
-
-        if expected_target is None:
-            return None
-
-        for detection in detections:
-
-            class_name = detection.get("class_name")
-
-            if class_name != expected_target:
-                return class_name
-
-        return None
 
     def start(self):
-
-        print("=" * 50)
-        print("2. GOREV BASLATILIYOR")
-        print("GORUNTU ISLEME ILE YUK BIRAKMA")
-        print("=" * 50)
-        print("MISSION SAFE MODE:", MISSION_SAFE_MODE)
-        print("ALLOW PAYLOAD DROP:", ALLOW_PAYLOAD_DROP)
-        print("=" * 50)
-
         self.prepare_coordinates()
 
-        connected = self.flight_controller.connect()
+        connected = (
+            self.flight_controller.connect()
+        )
 
         if not connected:
-            print("UYARI -> Cube baglantisi kurulamadi.")
-            print("2. gorev guvenli test modunda devam edecek.")
-            self.logger.write_log("UYARI -> Cube baglantisi kurulamadi")
+            print(
+                "UYARI -> Cube baglantisi kurulamadi."
+            )
+
+            print(
+                "Guvenli test modunda devam ediliyor."
+            )
+
+            self._safe_log(
+                "write_log",
+                "UYARI -> Cube baglantisi kurulamadi",
+            )
 
         print("=" * 50)
-        print("2. GOREV HEDEF SIRASI")
-        print("1 -> mavi_altigen: KIRMIZI YUK")
-        print("2 -> kirmizi_ucgen: MAVI YUK")
-        print("3 -> bitis noktasi")
+        print("2. GOREV KURALI")
+        print("SABIT HEDEF SIRASI YOK")
+        print("ILK DOGRULANAN HEDEF KILITLENIR")
+        print("MAVI ALTIGEN -> KIRMIZI YUK")
+        print("KIRMIZI UCGEN -> MAVI YUK")
         print("=" * 50)
 
         if not self.camera.is_opened():
-
             print("Kamera acilamadi.")
-            self.logger.camera_failed()
+
+            self._safe_log("camera_failed")
+
             self.stop()
             return
 
-        self.logger.camera_opened()
+        self._safe_log("camera_opened")
         self.start_video_recording()
 
-        print("2. gorev kamera sistemi basladi.")
-        self.logger.write_log("2. GOREV BASLADI")
+        self._safe_log(
+            "write_log",
+            "2. GOREV BASLADI",
+        )
 
-        cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(WINDOW_NAME, DISPLAY_WIDTH, DISPLAY_HEIGHT)
+        cv2.namedWindow(
+            WINDOW_NAME,
+            cv2.WINDOW_NORMAL,
+        )
+
+        cv2.resizeWindow(
+            WINDOW_NAME,
+            DISPLAY_WIDTH,
+            DISPLAY_HEIGHT,
+        )
 
         while True:
-
-            expected_target = self.get_expected_target()
-
             frame = self.camera.read_frame()
 
             if frame is None:
-
                 print("Goruntu alinamadi.")
-                self.logger.write_log("GORUNTU ALINAMADI")
+
+                self._safe_log(
+                    "write_log",
+                    "GORUNTU ALINAMADI",
+                )
+
                 break
 
             self.failsafe.update_frame_time()
 
             fps = self.calculate_fps()
 
-            detections = self.detector.detect(frame)
-
-            target_data = self.targeting.find_best_target(
-                detections=detections,
-                completed_targets=self.completed_targets,
-                frame=frame
+            detections = self.detector.detect(
+                frame
             )
 
-            wrong_target = self.find_wrong_detected_target(
-                detections=detections,
-                expected_target=expected_target
+            active_target = (
+                self._select_active_target(
+                    detections
+                )
             )
 
-            mission_state = "HEDEF_ARIYOR"
-            direction = "HEDEF_YOK"
+            if active_target is None:
+                target_data = None
+
+            else:
+                target_data = (
+                    self.targeting.find_target_by_name(
+                        detections=detections,
+                        target_name=active_target,
+                    )
+                )
+
+            status = "HEDEF ARANIYOR"
+            direction = "HEDEF YOK"
+            mission_state = "HEDEF ARANIYOR"
             payload_status = "BEKLIYOR"
-            status = "HEDEF YOK"
-            current_target = expected_target
-
-            if expected_target is None:
-                status = "GOREV TAMAMLANDI"
-                direction = "TUM YUKLER BIRAKILDI"
-                current_target = None
-                mission_state = "GOREV_TAMAMLANDI"
-                payload_status = "BIRAKILDI"
 
             if self.all_targets_completed():
+                self.finish_mission(
+                    frame,
+                    target_data,
+                    fps,
+                )
 
-                self.finish_mission(frame, target_data, fps)
                 break
 
-            elif target_data is not None:
+            if active_target is None:
+                self.stable_count = 0
 
-                detected_target = target_data["class_name"]
+                if self.can_print(
+                    self.last_lost_log_time,
+                    self.LOST_LOG_INTERVAL,
+                ):
+                    self.flight_controller.search_forward()
 
-                current_time = time.time()
+                    self.last_lost_log_time = (
+                        time.time()
+                    )
+
+            elif target_data is None:
+                self.stable_count = 0
+
+                status = "KILITLI HEDEF KAYIP"
+                direction = "HEDEFI TEKRAR ARA"
+                mission_state = "HEDEF KILITLI"
+
+                payload_status = (
+                    self.get_payload_name_for_target(
+                        active_target
+                    )
+                )
+
+                if self.can_print(
+                    self.last_lost_log_time,
+                    self.LOST_LOG_INTERVAL,
+                ):
+                    self._safe_log(
+                        "target_lost"
+                    )
+
+                    self.flight_controller.search_forward()
+
+                    self.last_lost_log_time = (
+                        time.time()
+                    )
+
+            else:
+                detected_target = target_data[
+                    "class_name"
+                ]
+
+                payload_status = (
+                    self.get_payload_name_for_target(
+                        detected_target
+                    )
+                )
 
                 if self.can_print(
                     self.last_target_log_time,
-                    self.TARGET_LOG_INTERVAL
+                    self.TARGET_LOG_INTERVAL,
                 ):
-
                     self.failsafe.update_target_time()
 
-                    self.logger.target_detected(
-                        target_data["class_name"],
-                        target_data["confidence"]
+                    self._safe_log(
+                        "target_detected",
+                        detected_target,
+                        target_data.get(
+                            "confidence",
+                            0.0,
+                        ),
                     )
 
-                    self.last_target_log_time = current_time
+                    self.last_target_log_time = (
+                        time.time()
+                    )
 
-                is_centered = target_data["is_centered"]
-
-                if is_centered:
-
+                if target_data.get(
+                    "is_centered",
+                    False,
+                ):
                     self.stable_count += 1
-                    payload_text = self.get_payload_name_for_target(detected_target)
 
-                    status = f"HEDEF ORTADA - {self.stable_count}/{STABLE_LIMIT}"
+                    status = (
+                        "HEDEF ORTADA - "
+                        f"{self.stable_count}/{STABLE_LIMIT}"
+                    )
+
                     direction = "MERKEZDE"
-                    mission_state = "MERKEZDE"
-                    payload_status = payload_text
+                    mission_state = "HEDEF MERKEZDE"
 
                     if self.stable_count >= STABLE_LIMIT:
-
                         status = "YUK BIRAKMA SEKANSI"
-                        direction = "MERKEZDE"
-                        mission_state = "YUK_BIRAKILIYOR"
-                        payload_status = payload_text
 
-                        self.release_payload_sequence(detected_target)
+                        mission_state = (
+                            "YUK BIRAKILIYOR"
+                        )
 
-                        self.logger.payload_dropped(detected_target)
+                        release_success = (
+                            self.release_payload_sequence(
+                                detected_target
+                            )
+                        )
 
-                        self.completed_targets[detected_target] = True
+                        if release_success:
+                            self._safe_log(
+                                "payload_dropped",
+                                detected_target,
+                            )
+
+                            self._mark_target_completed(
+                                detected_target
+                            )
 
                         self.stable_count = 0
 
-                        next_target = self.get_expected_target()
-
-                        if next_target is not None:
-                            print("=" * 50)
-                            print(f"SIRADAKI HEDEF ARTIK: {next_target}")
-                            print("=" * 50)
-
-                        time.sleep(1)
+                        time.sleep(1.0)
 
                 else:
-
                     self.stable_count = 0
                     status = "HEDEF VAR - ORTALA"
-                    direction = self.format_panel_direction(target_data)
-                    mission_state = "HEDEFE_HIZALANIYOR"
-                    payload_status = "BEKLIYOR"
 
-                    error_x = target_data.get("error_x", 0)
-                    error_y = target_data.get("error_y", 0)
+                    direction = (
+                        self.format_panel_direction(
+                            target_data
+                        )
+                    )
 
-                    current_time = time.time()
+                    mission_state = (
+                        "HEDEFE HIZALANIYOR"
+                    )
 
                     if self.can_print(
                         self.last_approach_log_time,
-                        self.APPROACH_LOG_INTERVAL
+                        self.APPROACH_LOG_INTERVAL,
                     ):
-
-                        self.flight_controller.approach_target(error_x, error_y)
-
-                        self.last_approach_log_time = current_time
-
-            else:
-
-                self.stable_count = 0
-
-                current_time = time.time()
-
-                if wrong_target is not None:
-
-                    status = f"YANLIS HEDEF: {wrong_target}"
-                    mission_state = "HEDEF_ARIYOR"
-                    direction = "HEDEF_YOK"
-                    payload_status = "BEKLIYOR"
-
-                    if self.can_print(
-                        self.last_wrong_target_log_time,
-                        self.WRONG_TARGET_LOG_INTERVAL
-                    ):
-
-                        print(
-                            f"YANLIS HEDEF GORULDU: {wrong_target} | "
-                            f"BEKLENEN: {expected_target} | YOK SAYILDI"
+                        self.flight_controller.approach_target(
+                            target_data.get(
+                                "error_x",
+                                0,
+                            ),
+                            target_data.get(
+                                "error_y",
+                                0,
+                            ),
                         )
 
-                        self.last_wrong_target_log_time = current_time
-
-                else:
-
-                    if expected_target is not None:
-                        status = "HEDEF YOK"
-                        direction = "HEDEF_YOK"
-                        mission_state = "HEDEF_ARIYOR"
-                        payload_status = "BEKLIYOR"
-
-                    if self.can_print(
-                        self.last_lost_log_time,
-                        self.LOST_LOG_INTERVAL
-                    ):
-
-                        self.logger.target_lost()
-                        self.flight_controller.search_forward()
-
-                        self.last_lost_log_time = current_time
+                        self.last_approach_log_time = (
+                            time.time()
+                        )
 
             display_frame = self.ui.draw(
                 frame=frame,
                 target_data=target_data,
-                current_target=current_target,
+                current_target=active_target,
                 status=status,
                 direction=direction,
                 fps=fps,
                 stable_count=self.stable_count,
                 mission_state=mission_state,
-                payload_status=payload_status
+                payload_status=payload_status,
             )
 
             if self.video_writer is not None:
-                self.video_writer.write(frame)
+                self.video_writer.write(
+                    display_frame
+                )
 
-            cv2.imshow(WINDOW_NAME, display_frame)
+            cv2.imshow(
+                WINDOW_NAME,
+                display_frame,
+            )
 
             key = cv2.waitKey(1) & 0xFF
 
             if key == ord("q"):
-                print("Kullanici tarafindan durduruldu.")
+                print(
+                    "Kullanici tarafindan durduruldu."
+                )
+
                 break
 
         self.stop()
 
     def stop(self):
+        try:
+            self.flight_controller.close()
 
-        self.flight_controller.close()
+        except Exception:
+            pass
 
-        self.camera.release()
+        try:
+            self.camera.release()
+
+        except Exception:
+            pass
 
         if self.video_writer is not None:
             self.video_writer.release()
+            self.video_writer = None
 
         cv2.destroyAllWindows()
 
         print("2. gorev sistemi kapatildi.")
-        self.logger.system_stopped()
+
+        self._safe_log("system_stopped")
