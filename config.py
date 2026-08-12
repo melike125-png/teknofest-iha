@@ -20,6 +20,7 @@ MAVLINK_CONNECTIONS = {
 }
 
 MAVLINK_BAUD = 115200
+MAVLINK_TELEMETRY_ENABLED = True
 
 # False kaldigi surece arm, kalkis, hareket ve inis komutlari yasaktir.
 MAVLINK_COMMANDS_ENABLED = False
