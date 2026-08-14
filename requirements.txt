@@ -35,3 +35,6 @@ ultralytics>=8.2.0,<9.0.0
 # --- Raspberry Pi GPIO (servo / yuk birakma) ---
 # Windows veya GPIO'suz ortamda kurulum basarili olabilir; kod test moduna gecer.
 gpiozero>=2.0,<3.0
+
+# --- Cube / Mission Planner MAVLink haberlesmesi ---
+pymavlink>=2.4.40,<3.0.0

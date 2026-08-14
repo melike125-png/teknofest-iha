@@ -13,10 +13,14 @@ PROJECT_NAME = "TEKNOFEST IHA GOREV SISTEMI"
 
 MODEL_PATH = "best.pt"
 
-CONF_LIMIT = 0.40
+# Raspberry Pi CPU cikaris boyutu. Kamera 640x480 kalir; YOLO kutulari
+# otomatik olarak orijinal goruntu koordinatlarina geri olcekler.
+INFERENCE_SIZE = 320
+
+CONF_LIMIT = 0.25
 
 
-MAX_DETECTION = 1
+MAX_DETECTION = 4
 
 IOU_LIMIT = 0.10
 
@@ -96,6 +100,18 @@ CENTER_TOLERANCE_Y = 40
 
 # Hedefin arka arkaya kac frame merkezde kalmasi gerektigi.
 STABLE_LIMIT = 3
+
+# Hedef kilidi icin gereken ardisik algilama sayisi. Merkezde bekleme ile
+# karistirilmaz; bu yalnizca sekil/sinif dogrulamasidir.
+TARGET_CONFIRMATION_FRAMES = 10
+
+# Yuk birakmadan once hedefin merkez toleransi icinde kesintisiz kalma suresi.
+CENTER_HOLD_SECONDS = 1.0
+
+# Sabit, asagi bakan C920 icin piksel hatasini govde hizina ceviren ayarlar.
+ALIGN_PIXEL_GAIN = 0.006
+ALIGN_MAX_SPEED_MPS = 0.50
+ALIGN_COMMAND_INTERVAL = 0.10
 
 
 # =========================================

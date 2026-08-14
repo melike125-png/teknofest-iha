@@ -1,0 +1,20 @@
+{
+  "name": "prova_sahasi_ornek",
+  "start_line": {
+    "left": {"lat": 39.000000, "lon": 32.000000},
+    "right": {"lat": 39.000000, "lon": 32.000050}
+  },
+  "pole_1": {"lat": 39.000200, "lon": 32.000300},
+  "pole_2": {"lat": 39.001400, "lon": 32.000300},
+  "search_polygon": [
+    {"lat": 39.000350, "lon": 32.000450},
+    {"lat": 39.000350, "lon": 32.001550},
+    {"lat": 39.000620, "lon": 32.001550},
+    {"lat": 39.000620, "lon": 32.000450}
+  ],
+  "landing_point": {"lat": 39.000050, "lon": 32.000120},
+  "mission_altitude_m": 25.0,
+  "search_altitude_m": 20.0,
+  "drop_altitude_m": 10.0
+}
+

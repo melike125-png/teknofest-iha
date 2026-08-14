@@ -1,5 +1,6 @@
 from pymavlink import mavutil
 import math
+import time
 
 
 class CubeMavlink:
@@ -254,6 +255,98 @@ class CubeMavlink:
             "gps": self.get_gps(),
             "battery": self.get_battery()
         }
+
+    def get_mission_current(self, timeout=2):
+        """Return Mission Planner's active mission item sequence."""
+        if self.master is None:
+            return None
+
+        msg = self.master.recv_match(
+            type="MISSION_CURRENT",
+            blocking=True,
+            timeout=timeout,
+        )
+        return None if msg is None else int(msg.seq)
+
+    def set_mission_current(self, sequence):
+        """Select the mission item that AUTO mode must continue from."""
+        if not self.is_connected():
+            return False
+
+        sequence = int(sequence)
+        if sequence < 0:
+            raise ValueError("Mission sira numarasi negatif olamaz.")
+
+        self.master.mav.mission_set_current_send(
+            self.system_id,
+            self.component_id,
+            sequence,
+        )
+        return True
+
+    def set_flight_mode(self, mode_name, timeout=5):
+        """Request an ArduCopter mode and verify it from heartbeat data."""
+        if not self.is_connected():
+            return False
+
+        mode_name = str(mode_name).upper()
+        mapping = self.master.mode_mapping()
+        if not mapping or mode_name not in mapping:
+            raise ValueError(f"Cube modu desteklenmiyor: {mode_name}")
+
+        mode_id = mapping[mode_name]
+        self.master.mav.set_mode_send(
+            self.system_id,
+            mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+            mode_id,
+        )
+
+        deadline = time.monotonic() + float(timeout)
+        while time.monotonic() < deadline:
+            status = self.get_mode_and_arm_status(timeout=1)
+            if str(status.get("mode", "")).upper() == mode_name:
+                return True
+
+        return False
+
+    def send_body_velocity(self, forward_mps, right_mps, down_mps=0.0):
+        """Send one BODY_NED velocity setpoint; caller must stream it."""
+        if not self.is_connected():
+            return False
+
+        type_mask = (
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_X_IGNORE
+            | mavutil.mavlink.POSITION_TARGET_TYPEMASK_Y_IGNORE
+            | mavutil.mavlink.POSITION_TARGET_TYPEMASK_Z_IGNORE
+            | mavutil.mavlink.POSITION_TARGET_TYPEMASK_AX_IGNORE
+            | mavutil.mavlink.POSITION_TARGET_TYPEMASK_AY_IGNORE
+            | mavutil.mavlink.POSITION_TARGET_TYPEMASK_AZ_IGNORE
+            | mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE
+            | mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE
+        )
+
+        self.master.mav.set_position_target_local_ned_send(
+            0,
+            self.system_id,
+            self.component_id,
+            mavutil.mavlink.MAV_FRAME_BODY_NED,
+            type_mask,
+            0.0,
+            0.0,
+            0.0,
+            float(forward_mps),
+            float(right_mps),
+            float(down_mps),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        )
+        return True
+
+    def stop_body_motion(self):
+        return self.send_body_velocity(0.0, 0.0, 0.0)
 
     def close(self):
         self.master = None

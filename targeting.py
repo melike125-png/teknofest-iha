@@ -179,3 +179,85 @@ class TargetingSystem:
                 }
 
         return best_target
+    def find_target_by_name(
+        self,
+        detections: list[dict],
+        target_name: str | None,
+    ) -> dict | None:
+        """
+        Kilitlenen hedef adına ait en uygun algılamayı seçer.
+
+        Hedef sırasına karar vermez.
+        Yalnızca Mission2Rules tarafından verilen hedefi arar.
+        """
+
+        if target_name not in (
+            TARGET_BLUE_HEXAGON,
+            TARGET_RED_TRIANGLE,
+        ):
+            return None
+
+        best_target = None
+        best_score = -1.0
+
+        for detection in detections:
+            if detection.get("class_name") != target_name:
+                continue
+
+            box = detection.get("box")
+
+            if box is None or len(box) != 4:
+                continue
+
+            box = [int(value) for value in box]
+
+            target_center_x, target_center_y = (
+                self.calculate_target_center(box)
+            )
+
+            error_x, error_y = self.calculate_error(
+                target_center_x,
+                target_center_y,
+            )
+
+            is_centered = self.check_centered(
+                error_x,
+                error_y,
+            )
+
+            direction = self.get_direction(
+                error_x,
+                error_y,
+            )
+
+            score = self.calculate_score(
+                detection,
+                box,
+            )
+
+            if score <= best_score:
+                continue
+
+            best_score = score
+
+            best_target = {
+                "class_name": target_name,
+                "confidence": float(
+                    detection.get("confidence", 0.0)
+                ),
+                "box": box,
+                "target_center": (
+                    target_center_x,
+                    target_center_y,
+                ),
+                "center_x": target_center_x,
+                "center_y": target_center_y,
+                "error_x": error_x,
+                "error_y": error_y,
+                "is_centered": is_centered,
+                "direction": direction,
+                "score": score,
+                "active_target": target_name,
+            }
+
+        return best_target

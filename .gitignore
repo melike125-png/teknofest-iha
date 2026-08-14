@@ -1,4 +1,4 @@
-__pycache__/
+﻿__pycache__/
 *.pyc
 
 *.mp4
@@ -10,4 +10,16 @@ runs/
 
 .env
 venv/
-.venv/
+pi_inceleme/
+outputs/
+archive/
+
+# Yerel aktarim, yedek ve inceleme ciktisi
+Desktop/
+video_frames/
+*.zip
+*_backup_*.py
+*_before_*.py
+
+# Artik bulunmayan eski mission_controller modulune ait gecersiz betik
+tests/test_mission_controller.py
