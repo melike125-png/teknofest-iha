@@ -1,4 +1,4 @@
-﻿__pycache__/
+__pycache__/
 *.pyc
 
 *.mp4
@@ -10,6 +10,4 @@ runs/
 
 .env
 venv/
-pi_inceleme/
-outputs/
-archive/
+.venv/

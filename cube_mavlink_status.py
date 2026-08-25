@@ -1,9 +1,11 @@
 from pymavlink import mavutil
+
+from config import MAVLINK_BAUD, MAVLINK_PORT
 import math
 import time
 
-PORT = "/dev/ttyACM0"
-BAUD = 115200
+PORT = MAVLINK_PORT
+BAUD = MAVLINK_BAUD
 
 
 def connect_cube():

@@ -1,36 +1,66 @@
 import json
 import os
 import time
+from enum import Enum
 
 import cv2
 
 from config import (
+    ALIGN_COMMAND_INTERVAL,
+    CENTER_HOLD_SECONDS,
     CENTER_TOLERANCE_X,
     CENTER_TOLERANCE_Y,
     DROP_ALTITUDE,
-    MAVLINK_TELEMETRY_ENABLED,
+    MODEL_PATH,
     MISSION_ALTITUDE,
-    STABLE_LIMIT,
+    TARGET_CONFIRMATION_FRAMES,
     TARGET_BLUE_HEXAGON,
     TARGET_RED_TRIANGLE,
     VIDEO_OUTPUT_NAME,
 )
-
 from camera import CameraSystem
 from detector import DetectorSystem
 from failsafe import FailsafeSystem
 from flight_controller import FlightController
 from logger import LoggerSystem
 from mission2_rules import Mission2Rules
-from payload_controller import SimulatedPayloadController
+from mission2_supervisor import Mission2Supervisor, Mission2Waypoints
+from mission2_execution import ExecutionStage, Mission2ExecutionCoordinator
+from mission2_scenario import load_scenario
+from dynamic_mission import DynamicMissionBuilder, ScenarioMode
+from payload_controller import (
+    MavlinkServoPayloadController,
+    SimulatedPayloadController,
+)
 from targeting import TargetingSystem
 
 
 WINDOW_NAME = "TEKNOFEST IHA 2. GOREV SISTEMI"
-DISPLAY_WIDTH = 1280
-DISPLAY_HEIGHT = 720
+DISPLAY_WIDTH = 960
+DISPLAY_HEIGHT = 540
 MISSION2_COORDINATE_FILE = "mission2_coordinates.json"
+MISSION2_ROUTE_FILE = "mission2_route.json"
+MISSION2_ROUTE_EXAMPLE_FILE = "mission2_route.example.json"
+MISSION2_TARGET_MAP_FILE = "mission2_detected_targets.json"
+MISSION2_GENERATED_PLAN_FILE = "mission2_generated_plan.json"
 MISSION_SAFE_MODE = True
+REAL_PAYLOAD_TEST_MODE = os.getenv("REAL_PAYLOAD_TEST_MODE", "0") == "1"
+
+
+class MissionPhase(str, Enum):
+    WAIT_POLE_2 = "DIREK 2 BEKLENIYOR"
+    AUTO_SEARCH = "AUTO TARAMA"
+    TARGET_CONFIRM = "HEDEF DOGRULANIYOR"
+    GUIDED_ALIGN = "GUIDED MERKEZLEME"
+    STABILIZE = "MERKEZDE SABITLEME"
+    MAP_TARGET = "HEDEF KOORDINATI KAYDETME"
+    BUILD_DYNAMIC_ROUTE = "DINAMIK ROTA OLUSTURMA"
+    PAYLOAD_EXECUTION = "YUK BIRAKMA ROTASI"
+    DROP = "YUK BIRAKMA"
+    ASCEND = "GOREV IRTIFASINA CIKIS"
+    RESUME_AUTO = "AUTO ROTAYA DONUS"
+    EXIT_ROUTE = "AUTO CIKIS ROTASI"
+    ABORT = "GOREV DURDURULDU"
 
 
 class Mission2UI:
@@ -125,6 +155,10 @@ class Mission2UI:
             2,
         )
 
+        # Yarışma/VNC görünümü sade tutulur. Görev adımı, yön, FPS ve
+        # yük olayları kamera görüntüsüne basılmaz; yalnızca terminale yazılır.
+        return display_frame
+
         panel_height = 205
         overlay = display_frame.copy()
 
@@ -153,7 +187,7 @@ class Mission2UI:
             f"YON: {direction}",
             f"GOREV ADIMI: {mission_state}",
             f"YUK DURUMU: {payload_status}",
-            f"MERKEZ SABITLIGI: {stable_count}/{STABLE_LIMIT}",
+            f"MERKEZ KARARLILIGI: {stable_count} KARE",
         ]
 
         y_position = 28
@@ -192,32 +226,47 @@ class Mission2Payload:
         self.camera = CameraSystem()
         self.detector = DetectorSystem()
 
-        self.payload = SimulatedPayloadController()
-
-        print(
-            "GUVENLI MOD -> Fiziksel yuk mekanizmasi devre disi, "
-            "simulasyon kontrolu kullaniliyor."
-        )
+        if REAL_PAYLOAD_TEST_MODE:
+            self.payload = MavlinkServoPayloadController()
+            print(
+                "UYARI -> GERCEK SERVO TESTI ACIK. "
+                "Ucus hareketleri guvenli modda kapali."
+            )
+        else:
+            self.payload = SimulatedPayloadController()
+            print(
+                "GUVENLI MOD -> Fiziksel yuk mekanizmasi devre disi, "
+                "simulasyon kontrolu kullaniliyor."
+            )
 
         self.targeting = TargetingSystem()
 
         self.rules = Mission2Rules(
-            required_confirmations=STABLE_LIMIT
+            required_confirmations=TARGET_CONFIRMATION_FRAMES
         )
 
         self.completed_targets = self.rules.completed_targets
+        self.execution = Mission2ExecutionCoordinator(
+            (TARGET_BLUE_HEXAGON, TARGET_RED_TRIANGLE)
+        )
+        self.scenario = None
+        self.dynamic_plan = None
+        self.dynamic_builder = DynamicMissionBuilder(MISSION_ALTITUDE)
 
         self.ui = Mission2UI()
 
         self.flight_controller = FlightController(
-            use_real_cube=MAVLINK_TELEMETRY_ENABLED
-)
+            use_real_cube=not MISSION_SAFE_MODE
+        )
+        self.mission_supervisor = None
 
         self.start_point = None
         self.finish_point = None
         self.finish_point_reached = False
 
         self.stable_count = 0
+        self.centered_since = None
+        self.phase = MissionPhase.WAIT_POLE_2
         self.prev_time = 0.0
         self.video_writer = None
 
@@ -225,14 +274,23 @@ class Mission2Payload:
         self.last_lost_log_time = 0.0
         self.last_approach_log_time = 0.0
 
-        self.TARGET_LOG_INTERVAL = 0.7
+        self.TARGET_LOG_INTERVAL = 2.0
         self.LOST_LOG_INTERVAL = 1.0
-        self.APPROACH_LOG_INTERVAL = 0.5
+        self.APPROACH_LOG_INTERVAL = ALIGN_COMMAND_INTERVAL
 
         self._fallback_confirmation_counts = {
             TARGET_BLUE_HEXAGON: 0,
             TARGET_RED_TRIANGLE: 0,
         }
+
+        self._terminal_announced_target = None
+        self._terminal_centered_target = None
+        self._last_fps_print_time = 0.0
+
+    @staticmethod
+    def terminal_event(message):
+        timestamp = time.strftime("%H:%M:%S")
+        print(f"[{timestamp}] {message}", flush=True)
 
     def _safe_log(self, method_name, *args):
         try:
@@ -374,6 +432,126 @@ class Mission2Payload:
 
         self.show_coordinates()
 
+    def _prepare_scenario(self):
+        """Select official-field or Mission Planner-template operation."""
+        try:
+            self.scenario = load_scenario(
+                route_path=MISSION2_ROUTE_FILE,
+            )
+        except FileNotFoundError:
+            if not MISSION_SAFE_MODE:
+                raise
+            self.scenario = load_scenario(
+                field_path="__field_config_not_supplied__.json",
+                route_path=MISSION2_ROUTE_EXAMPLE_FILE,
+            )
+            self.terminal_event(
+                "SIMULASYON -> mission2_route.example.json kullaniliyor"
+            )
+
+        self.terminal_event(
+            f"SENARYO HAZIR -> {self.scenario.mode.value}"
+        )
+
+    def _gps_samples_for_target(self, target_name):
+        if MISSION_SAFE_MODE:
+            base = self.start_point or {"lat": 37.0001, "lon": 37.0001}
+            offsets = {
+                TARGET_BLUE_HEXAGON: (0.00005, 0.00003),
+                TARGET_RED_TRIANGLE: (0.00007, -0.00002),
+            }
+            lat_offset, lon_offset = offsets[target_name]
+            return [
+                {
+                    "ok": True,
+                    "fix_type": 3,
+                    "lat": float(base["lat"]) + lat_offset,
+                    "lon": float(base["lon"]) + lon_offset,
+                    "alt": MISSION_ALTITUDE,
+                }
+                for _ in range(5)
+            ], True
+
+        samples = []
+        for _ in range(5):
+            samples.append(self.flight_controller.get_gps_position())
+            time.sleep(0.1)
+        return samples, False
+
+    def _build_dynamic_plan(self):
+        self.phase = MissionPhase.BUILD_DYNAMIC_ROUTE
+        fixes = self.execution.target_map.as_dict()
+        ordered_targets = tuple(self.execution.mapping_order)
+
+        if self.scenario.mode == ScenarioMode.FIELD_COORDINATES:
+            plan = self.dynamic_builder.build_field_plan(
+                self.scenario.field,
+                fixes,
+                ordered_targets,
+            )
+        else:
+            plan = self.dynamic_builder.build_template_plan(
+                self.scenario.route,
+                fixes,
+                ordered_targets,
+            )
+
+        plan.save(MISSION2_GENERATED_PLAN_FILE)
+        self.execution.activate_plan(plan)
+        self.dynamic_plan = plan
+        self.phase = MissionPhase.PAYLOAD_EXECUTION
+        self.terminal_event("IKI HEDEF HARITALANDI -> DINAMIK PLAN HAZIR")
+        for index, waypoint in enumerate(plan.waypoints, start=1):
+            location = (
+                f"lat={waypoint.lat:.7f} lon={waypoint.lon:.7f}"
+                if waypoint.lat is not None and waypoint.lon is not None
+                else f"Mission Planner WP={waypoint.source_sequence}"
+            )
+            self.terminal_event(
+                f"PLAN {index}: {waypoint.role} | {waypoint.command} | {location}"
+            )
+        self.terminal_event(
+            "GUVENLI MOD -> Plan Cube'a yuklenmedi; yukler simulasyon"
+        )
+
+    def _map_centered_target(self, target_name, confidence):
+        samples, simulated = self._gps_samples_for_target(target_name)
+        fix = self.execution.target_map.record(
+            target_name,
+            samples,
+            confidence,
+            simulated=simulated,
+        )
+        self.execution.record_mapped_target(fix)
+        self.execution.target_map.save(MISSION2_TARGET_MAP_FILE)
+        self.rules.release_target_lock()
+        if self.mission_supervisor is not None:
+            self.mission_supervisor.complete_mapping_and_resume()
+
+        self.terminal_event(
+            f"HEDEF HARITALANDI {self.execution.target_map.mapped_count}/2 | "
+            f"{target_name} | lat={fix.lat:.7f} lon={fix.lon:.7f}"
+        )
+        self.terminal_event("BU GECISTE YUK BIRAKILMADI")
+        if self.execution.target_map.all_mapped:
+            self._build_dynamic_plan()
+        else:
+            self.phase = MissionPhase.AUTO_SEARCH
+
+    def _filter_detections_for_stage(self, detections):
+        if self.execution.stage == ExecutionStage.MAPPING:
+            return [
+                item for item in detections
+                if not self.execution.target_map.is_mapped(item.get("class_name"))
+            ]
+        if self.execution.stage == ExecutionStage.PAYLOAD_EXECUTION:
+            expected = self.execution.expected_payload_target
+            return [
+                item for item in detections
+                if item.get("class_name") == expected
+            ]
+        return []
+
     def show_coordinates(self):
         print("=" * 50)
         print("2. GOREV KOORDINAT OZETI")
@@ -402,6 +580,37 @@ class Mission2Payload:
         )
 
         print("=" * 50)
+
+    def prepare_mission_supervisor(self):
+        """Load waypoint gates matching the mission uploaded by Mission Planner."""
+        if not os.path.exists(MISSION2_ROUTE_FILE):
+            print(
+                "UYARI -> mission2_route.json bulunamadi. "
+                "Gercek Gorev 2 baslatilamaz."
+            )
+            return False
+
+        try:
+            with open(MISSION2_ROUTE_FILE, "r", encoding="utf-8") as file:
+                data = json.load(file)
+
+            waypoints = Mission2Waypoints(
+                pole_2_outside=int(data["pole_2_outside_waypoint"]),
+                search_exit=int(data["search_exit_waypoint"]),
+                finish_line_crossed=int(
+                    data["finish_line_crossed_waypoint"]
+                ),
+            )
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+            print("Gorev 2 rota ayari gecersiz:", error)
+            return False
+
+        self.mission_supervisor = Mission2Supervisor(
+            self.flight_controller,
+            waypoints,
+        )
+        self.mission_supervisor.start()
+        return True
 
     def get_expected_target(self):
         return getattr(
@@ -565,7 +774,7 @@ class Mission2Payload:
             for target_name in visible_targets
             if self._fallback_confirmation_counts[
                 target_name
-            ] >= STABLE_LIMIT
+            ] >= TARGET_CONFIRMATION_FRAMES
         ]
 
         selected_target = None
@@ -760,6 +969,10 @@ class Mission2Payload:
         print("Yuk:", payload_name)
         print("=" * 50)
 
+        self.terminal_event(
+            f"YUK BIRAKMA BASLADI | hedef={current_target} | yuk={payload_name}"
+        )
+
         self.flight_controller.hover()
         time.sleep(0.5)
 
@@ -770,10 +983,10 @@ class Mission2Payload:
         time.sleep(1.0)
 
         if current_target == TARGET_BLUE_HEXAGON:
-            self.payload.release_red_payload()
+            payload_released = self.payload.release_red_payload()
 
         elif current_target == TARGET_RED_TRIANGLE:
-            self.payload.release_blue_payload()
+            payload_released = self.payload.release_blue_payload()
 
         else:
             print(
@@ -781,6 +994,18 @@ class Mission2Payload:
             )
 
             return False
+
+        if not payload_released:
+            self.terminal_event(
+                f"YUK BIRAKMA BASARISIZ | hedef={current_target}"
+            )
+            return False
+
+        self.terminal_event(
+            f"{payload_name} BIRAKILDI "
+            f"({'GERCEK SERVO' if REAL_PAYLOAD_TEST_MODE else 'GUVENLI SIMULASYON'}) | "
+            f"hedef={current_target}"
+        )
 
         self.payload.center_remaining_payload()
 
@@ -805,6 +1030,37 @@ class Mission2Payload:
         return True
 
     def go_to_finish_point(self):
+        if self.dynamic_plan is not None:
+            print("=" * 50)
+            print("YAZILIM TARAFINDAN OLUSTURULAN CIKIS/INIS ROTASI")
+            for waypoint in self.dynamic_plan.waypoints:
+                if waypoint.role not in (
+                    "SEARCH_EXIT",
+                    "FINISH_CROSS",
+                    "LAND_APPROACH",
+                    "LAND",
+                ):
+                    continue
+                if waypoint.source_sequence is not None:
+                    location = f"Mission Planner WP {waypoint.source_sequence}"
+                else:
+                    location = f"{waypoint.lat:.7f}, {waypoint.lon:.7f}"
+                print(f"{waypoint.role}: {waypoint.command} -> {location}")
+            if MISSION_SAFE_MODE:
+                print("GUVENLI MOD -> Cikis ve inis rotasi simule edildi.")
+                self.execution.mark_landed()
+                self.finish_point_reached = True
+                print("=" * 50)
+                return True
+
+        if self.mission_supervisor is not None:
+            print("=" * 50)
+            print("IKI YUK TAMAMLANDI")
+            print("MISSION PLANNER AUTO CIKIS ROTASI DEVAM EDIYOR")
+            print("BITIS CIZGISINDEN SONRA LAND KOMUTU UYGULANACAK")
+            print("=" * 50)
+            return True
+
         if self.finish_point is None:
             print("Bitis noktasi yok.")
             return False
@@ -872,12 +1128,28 @@ class Mission2Payload:
         print("KIRMIZI YUK -> MAVI ALTIGEN")
         print("MAVI YUK -> KIRMIZI UCGEN")
         print(
-            "BITIS NOKTASINA GIDIS SIMULE EDILDI"
+            "AUTO CIKIS ROTASI BASLATILDI"
+            if self.mission_supervisor is not None
+            else "BITIS NOKTASINA GIDIS SIMULE EDILDI"
         )
         print("=" * 50)
 
     def start(self):
-        self.prepare_coordinates()
+        print("=" * 62)
+        print("TEKNOFEST IHA - 2. GOREV KAMERA VE YUK SISTEMI")
+        print(f"MODEL: {MODEL_PATH} | KAMERA: LOGITECH C920")
+        print("MAVI ALTIGEN -> KIRMIZI YUK")
+        print("KIRMIZI UCGEN -> MAVI YUK")
+        print("CIKIS: Q")
+        print("=" * 62)
+        self.terminal_event("SISTEM BASLATILIYOR")
+
+        try:
+            self._prepare_scenario()
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+            print("2. gorev senaryosu hazirlanamadi:", error)
+            self.stop()
+            return
 
         connected = (
             self.flight_controller.connect()
@@ -897,6 +1169,10 @@ class Mission2Payload:
                 "UYARI -> Cube baglantisi kurulamadi",
             )
 
+        if not MISSION_SAFE_MODE and not self.prepare_mission_supervisor():
+            self.stop()
+            return
+
         print("=" * 50)
         print("2. GOREV KURALI")
         print("SABIT HEDEF SIRASI YOK")
@@ -914,6 +1190,8 @@ class Mission2Payload:
             return
 
         self._safe_log("camera_opened")
+        self.terminal_event("KAMERA HAZIR")
+        self.terminal_event(f"YOLO MODEL HAZIR | {MODEL_PATH}")
         self.start_video_recording()
 
         self._safe_log(
@@ -949,15 +1227,69 @@ class Mission2Payload:
 
             fps = self.calculate_fps()
 
-            detections = self.detector.detect(
-                frame
-            )
+            if time.monotonic() - self._last_fps_print_time >= 2.0:
+                self.terminal_event(
+                    f"KAMERA FPS: {fps:.1f} | "
+                    f"MODEL FPS: {self.detector.get_fps():.1f} | "
+                    f"MODEL: {MODEL_PATH}"
+                )
+                self._last_fps_print_time = time.monotonic()
 
-            active_target = (
-                self._select_active_target(
+            if self.mission_supervisor is not None:
+                mission_sequence = self.flight_controller.get_mission_current()
+                self.mission_supervisor.update_mission_sequence(mission_sequence)
+                search_authorized = (
+                    self.mission_supervisor.camera_search_authorized
+                    or self.mission_supervisor.target_intervention_active
+                )
+            else:
+                search_authorized = True
+
+            if not search_authorized:
+                self.phase = MissionPhase.WAIT_POLE_2
+            elif self.get_expected_target() is None:
+                self.phase = MissionPhase.AUTO_SEARCH
+
+            if search_authorized:
+                detections = self.detector.detect(frame)
+                detections = self._filter_detections_for_stage(detections)
+            else:
+                detections = []
+
+            expected_target = self.get_expected_target()
+
+            if (
+                expected_target is None
+                and not self.detector.consume_new_result()
+            ):
+                active_target = None
+            else:
+                active_target = self._select_active_target(
                     detections
                 )
-            )
+
+            if active_target is not None and self.phase == MissionPhase.AUTO_SEARCH:
+                self.phase = MissionPhase.TARGET_CONFIRM
+
+            if (
+                active_target is not None
+                and self.mission_supervisor is not None
+                and not self.mission_supervisor.target_intervention_active
+            ):
+                if self.execution.stage == ExecutionStage.MAPPING:
+                    intervention_started = (
+                        self.mission_supervisor.begin_mapping_intervention()
+                    )
+                else:
+                    intervention_started = (
+                        self.mission_supervisor.begin_target_intervention()
+                    )
+
+                if not intervention_started:
+                    self.rules.active_target = None
+                    active_target = None
+                else:
+                    self.phase = MissionPhase.GUIDED_ALIGN
 
             if active_target is None:
                 target_data = None
@@ -986,19 +1318,13 @@ class Mission2Payload:
 
             if active_target is None:
                 self.stable_count = 0
-
-                if self.can_print(
-                    self.last_lost_log_time,
-                    self.LOST_LOG_INTERVAL,
-                ):
-                    self.flight_controller.search_forward()
-
-                    self.last_lost_log_time = (
-                        time.time()
-                    )
+                self.centered_since = None
+                mission_state = self.phase.value
 
             elif target_data is None:
                 self.stable_count = 0
+                self.centered_since = None
+                self._terminal_centered_target = None
 
                 status = "KILITLI HEDEF KAYIP"
                 direction = "HEDEFI TEKRAR ARA"
@@ -1018,7 +1344,7 @@ class Mission2Payload:
                         "target_lost"
                     )
 
-                    self.flight_controller.search_forward()
+                    self.flight_controller.hover()
 
                     self.last_lost_log_time = (
                         time.time()
@@ -1034,6 +1360,17 @@ class Mission2Payload:
                         detected_target
                     )
                 )
+
+                if self._terminal_announced_target != detected_target:
+                    confidence = float(
+                        target_data.get("confidence", 0.0)
+                    )
+                    self.terminal_event(
+                        f"{detected_target.upper()} ALGILANDI | "
+                        f"guven=%{confidence * 100:.1f} | "
+                        f"kutu={target_data.get('box')}"
+                    )
+                    self._terminal_announced_target = detected_target
 
                 if self.can_print(
                     self.last_target_log_time,
@@ -1058,22 +1395,58 @@ class Mission2Payload:
                     "is_centered",
                     False,
                 ):
-                    self.stable_count += 1
+                    self.flight_controller.hover()
+                    if self.centered_since is None:
+                        self.centered_since = time.monotonic()
+
+                    if self._terminal_centered_target != detected_target:
+                        self.terminal_event(
+                            f"{detected_target.upper()} MERKEZDE | "
+                            f"{CENTER_HOLD_SECONDS:.1f} sn sabitleme basladi"
+                        )
+                        self._terminal_centered_target = detected_target
+
+                    centered_elapsed = time.monotonic() - self.centered_since
+                    self.stable_count = int(centered_elapsed * max(fps, 1.0))
+                    self.phase = MissionPhase.STABILIZE
 
                     status = (
                         "HEDEF ORTADA - "
-                        f"{self.stable_count}/{STABLE_LIMIT}"
+                        f"{centered_elapsed:.1f}/{CENTER_HOLD_SECONDS:.1f} sn"
                     )
 
                     direction = "MERKEZDE"
-                    mission_state = "HEDEF MERKEZDE"
+                    mission_state = self.phase.value
 
-                    if self.stable_count >= STABLE_LIMIT:
+                    if centered_elapsed >= CENTER_HOLD_SECONDS:
+                        if self.execution.stage == ExecutionStage.MAPPING:
+                            self.phase = MissionPhase.MAP_TARGET
+                            self._map_centered_target(
+                                detected_target,
+                                float(target_data.get("confidence", 0.0)),
+                            )
+                            self.stable_count = 0
+                            self.centered_since = None
+                            self._terminal_announced_target = None
+                            self._terminal_centered_target = None
+                            time.sleep(0.5)
+                            continue
+
+                        if (
+                            not self.execution.payload_release_authorized
+                            or detected_target
+                            != self.execution.expected_payload_target
+                        ):
+                            self.terminal_event(
+                                "YUK BIRAKMA ENGELLENDI -> Iki hedef ve dinamik plan gerekli"
+                            )
+                            self.stable_count = 0
+                            self.centered_since = None
+                            continue
+
                         status = "YUK BIRAKMA SEKANSI"
-
-                        mission_state = (
-                            "YUK BIRAKILIYOR"
-                        )
+                        self.phase = MissionPhase.DROP
+                        mission_state = self.phase.value
 
                         release_success = (
                             self.release_payload_sequence(
@@ -1082,21 +1455,49 @@ class Mission2Payload:
                         )
 
                         if release_success:
+                            self.execution.mark_payload_released(detected_target)
                             self._safe_log(
                                 "payload_dropped",
                                 detected_target,
                             )
 
+                            if self.mission_supervisor is not None:
+                                payload_key = self.rules.get_payload_for_target(
+                                    detected_target
+                                )
+                                resumed = (
+                                    self.mission_supervisor.complete_payload_and_resume(
+                                        payload_key
+                                    )
+                                )
+                                if not resumed:
+                                    self.phase = MissionPhase.ABORT
+                                    self._safe_log(
+                                        "write_log",
+                                        "KRITIK -> AUTO rotasina donulemedi",
+                                    )
+
                             self._mark_target_completed(
                                 detected_target
                             )
 
+                            if self.all_targets_completed():
+                                self.phase = MissionPhase.EXIT_ROUTE
+                            elif self.phase != MissionPhase.ABORT:
+                                self.phase = MissionPhase.AUTO_SEARCH
+
                         self.stable_count = 0
+                        self.centered_since = None
+                        self._terminal_announced_target = None
+                        self._terminal_centered_target = None
 
                         time.sleep(1.0)
 
                 else:
                     self.stable_count = 0
+                    self.centered_since = None
+                    self._terminal_centered_target = None
+                    self.phase = MissionPhase.GUIDED_ALIGN
                     status = "HEDEF VAR - ORTALA"
 
                     direction = (
@@ -1105,9 +1506,7 @@ class Mission2Payload:
                         )
                     )
 
-                    mission_state = (
-                        "HEDEFE HIZALANIYOR"
-                    )
+                    mission_state = self.phase.value
 
                     if self.can_print(
                         self.last_approach_log_time,
@@ -1162,6 +1561,12 @@ class Mission2Payload:
         self.stop()
 
     def stop(self):
+        try:
+            self.detector.close()
+
+        except Exception:
+            pass
+
         try:
             self.flight_controller.close()
 

@@ -1,0 +1,7 @@
+{
+  "pole_2_outside_waypoint": 4,
+  "search_exit_waypoint": 12,
+  "finish_line_crossed_waypoint": 18,
+  "landing_approach_waypoint": 19,
+  "landing_waypoint": 20
+}

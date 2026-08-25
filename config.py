@@ -1,38 +1,35 @@
 # config.py
 
+import os
+
 # =========================================
 # PROJE
 # =========================================
 
 PROJECT_NAME = "TEKNOFEST IHA GOREV SISTEMI"
 
+
 # =========================================
-# MAVLINK BAGLANTI AYARLARI
+# CUBE / MAVLINK
 # =========================================
 
-# SIMULATION: Gazebo/SITL
-# REAL_CUBE: Gercek Cube USB baglantisi
-MAVLINK_CONNECTION_MODE = "SIMULATION"
-
-MAVLINK_CONNECTIONS = {
-    "SIMULATION": "udpin:127.0.0.1:14560",
-    "REAL_CUBE": "/dev/ttyACM0",
-}
-
-MAVLINK_BAUD = 115200
-MAVLINK_TELEMETRY_ENABLED = True
-
-# False kaldigi surece arm, kalkis, hareket ve inis komutlari yasaktir.
-MAVLINK_COMMANDS_ENABLED = False
+# Raspberry Pi 5 GPIO14/15 UART0. USB ile bakim/test gerektiğinde
+# MAVLINK_PORT=/dev/ttyACM0 ortam degiskeniyle gecici olarak degistirilebilir.
+MAVLINK_PORT = os.environ.get("MAVLINK_PORT", "/dev/ttyAMA0")
+MAVLINK_BAUD = int(os.environ.get("MAVLINK_BAUD", "115200"))
 
 
 # =========================================
 # MODEL
 # =========================================
 
-MODEL_PATH = "best.pt"
+MODEL_PATH = "best_ncnn_model"
 
-CONF_LIMIT = 0.40
+# Raspberry Pi CPU cikaris boyutu. Kamera 640x480 kalir; YOLO kutulari
+# otomatik olarak orijinal goruntu koordinatlarina geri olcekler.
+INFERENCE_SIZE = 320
+
+CONF_LIMIT = 0.25
 
 
 MAX_DETECTION = 4
@@ -115,6 +112,18 @@ CENTER_TOLERANCE_Y = 40
 
 # Hedefin arka arkaya kac frame merkezde kalmasi gerektigi.
 STABLE_LIMIT = 3
+
+# Hedef kilidi icin gereken ardisik algilama sayisi. Merkezde bekleme ile
+# karistirilmaz; bu yalnizca sekil/sinif dogrulamasidir.
+TARGET_CONFIRMATION_FRAMES = 10
+
+# Yuk birakmadan once hedefin merkez toleransi icinde kesintisiz kalma suresi.
+CENTER_HOLD_SECONDS = 1.0
+
+# Sabit, asagi bakan C920 icin piksel hatasini govde hizina ceviren ayarlar.
+ALIGN_PIXEL_GAIN = 0.006
+ALIGN_MAX_SPEED_MPS = 0.50
+ALIGN_COMMAND_INTERVAL = 0.10
 
 
 # =========================================

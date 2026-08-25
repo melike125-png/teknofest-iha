@@ -333,6 +333,11 @@ class Mission2Rules:
 
         return True
 
+    def release_target_lock(self) -> None:
+        """Release a mapping-only target without marking its payload complete."""
+        self.active_target = None
+        self._reset_confirmation_counts()
+
     def _reset_confirmation_counts(self) -> None:
         for target_name in VALID_TARGETS:
             self.confirmation_counts[target_name] = 0
